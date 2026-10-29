@@ -754,6 +754,9 @@ class AddDownloadDialog(QDialog):
         for queue_id, name in queues or []:
             self.when.addItem(f"Add to {name}", f"queue:{queue_id}")
         self.quality = QComboBox()
+        self.audio_lang = QComboBox()   # dubbed audio tracks, when the video has them
+        self.audio_lang.setToolTip("This video has dubbed audio. Pick the language to download it in.")
+        self.preferred_lang = settings.value("audio_language", "") or ""
         self.stream_note = QLabel()
         self.stream_note.setWordWrap(True)
         self.stream_note.setProperty("muted", True)
@@ -763,6 +766,8 @@ class AddDownloadDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         form.addRow("URL", self.url)
         form.addRow("Quality", self.quality)
+        form.addRow("Audio", self.audio_lang)
+        form.setRowVisible(self.audio_lang, False)
         form.addRow("", self.stream_note)
         form.addRow("Save as", self.filename)
         form.addRow("Folder", folder_row)
@@ -830,7 +835,7 @@ class AddDownloadDialog(QDialog):
         folder = self.base_folder
         if self.sort_by_type:
             name = self.filename.text().strip() or QUrl(self.url.text().strip()).fileName()
-            kind = "music" if self.variant() == "audio" else theme.file_type(name, self.kind)
+            kind = "music" if self.quality.currentData() == "audio" else theme.file_type(name, self.kind)
             if kind in TYPE_FOLDERS:
                 folder = str(Path(self.base_folder) / TYPE_FOLDERS[kind])
         self.folder.setText(folder)
@@ -930,6 +935,9 @@ class AddDownloadDialog(QDialog):
         self.filename.setPlaceholderText("Auto (video title)" if self.kind == "ytdl" else "Auto (from server)")
         for widget in (self.quality, self.stream_note):
             self.form.setRowVisible(widget, is_stream)
+        if not is_stream or url != self._probed_url:
+            self.form.setRowVisible(self.audio_lang, False)
+            self.audio_lang.clear()
         if is_stream and url != self._probed_url:
             self.preview.setVisible(False)
             self._start_probe(url)
@@ -975,12 +983,35 @@ class AddDownloadDialog(QDialog):
             self.quality.setEnabled(len(variants) > 1)
             n = len(variants)
             name = (ytdl.site_for(self._probed_url) or "Online") if self.kind == "ytdl" else self.kind.upper()
-            self.stream_note.setText(f"{name} video" + (f" · {n} qualities" if n > 1 else ""))
+            langs = self._fill_languages(variants)
+            self.stream_note.setText(f"{name} video" + (f" · {n} qualities" if n > 1 else "")
+                                     + (f" · {langs} audio languages" if langs else ""))
             self._update_folder()
             self._show_preview(self._probed_url)
 
+    def _fill_languages(self, variants) -> int:
+        """List the video's dubbed audio tracks (original first, the preferred language
+        from Settings picked if it's there). Returns how many there are (0: row hidden)."""
+        self.audio_lang.clear()
+        langs = ytdl.meta(self._probed_url).get("languages") or [] if self.kind == "ytdl" else []
+        if any(v.id.startswith("item:") for v in variants):
+            langs = []  # a post with several videos: each has its own tracks
+        for code, name, original in langs:
+            self.audio_lang.addItem(f"{name} (original)" if original else name, None if original else code)
+        pref = self.preferred_lang
+        match = next((i for i, (code, _, _) in enumerate(langs)
+                      if pref and (code == pref or code.startswith(pref + "-"))), 0)
+        self.audio_lang.setCurrentIndex(match)
+        self.form.setRowVisible(self.audio_lang, bool(langs))
+        return len(langs)
+
     def variant(self) -> str | None:
-        return self.quality.currentData() if self.kind != "file" else None
+        if self.kind == "file":
+            return None
+        quality, lang = self.quality.currentData(), self.audio_lang.currentData()
+        if lang and self.audio_lang.count() and (quality is None or not quality.startswith(("item:", "fmt:"))):
+            return f"{quality or 'best'}@{lang}"
+        return quality
 
     def start_now(self) -> bool:
         return self.when.currentData() == "now"
@@ -1564,6 +1595,14 @@ class SettingsDialog(QDialog):
         d.addRow("Connections per download", self.connections)
         d.addRow("Downloads at the same time", self.max_active)
         d.addRow("Speed limit (all downloads)", self.speed_limit)
+        self.audio_language = QComboBox()
+        self.audio_language.addItem("Original language", "")
+        for code, name in ytdl.COMMON_LANGUAGES:
+            self.audio_language.addItem(name, code)
+        self.audio_language.setCurrentIndex(max(0, self.audio_language.findData(settings.value("audio_language", ""))))
+        self.audio_language.setToolTip("Some videos (on YouTube, for example) come dubbed in other languages. "
+                                       "PyDM picks this one when a video has it; you can still change it per video.")
+        d.addRow("Prefer video audio in", self.audio_language)
         self.resume_queues = QCheckBox("Continue queues that were running when PyDM closed or the PC restarted")
         self.resume_queues.setChecked(settings.value("resume_queues", True, type=bool))
         d.addRow("", self.resume_queues)
@@ -3388,6 +3427,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("done_window", dlg.done_window.isChecked())
         self.settings.setValue("virus_scan", dlg.virus_scan.currentData())
         self.settings.setValue("resume_queues", dlg.resume_queues.isChecked())
+        self.settings.setValue("audio_language", dlg.audio_language.currentData())
         self.set_speed_limit(dlg.speed_limit.value())
         self.manager.max_active = dlg.max_active.value()
         if dlg.theme_mode() != self.settings.value("theme", "system"):

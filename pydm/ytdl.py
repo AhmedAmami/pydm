@@ -216,6 +216,54 @@ def meta(url: str) -> dict:
 
 def _remember(url: str, info: dict) -> None:
     _meta[url] = {k: info.get(k) for k in ("title", "thumbnail", "duration", "uploader", "channel")}
+    _meta[url]["languages"] = audio_languages(info.get("formats") or [])
+
+
+# Offered under Settings > "Prefer audio in"; a video's own list comes from audio_languages().
+COMMON_LANGUAGES = [
+    ("ar", "Arabic"), ("bn", "Bangla"), ("zh", "Chinese"), ("nl", "Dutch"), ("en", "English"),
+    ("fr", "French"), ("de", "German"), ("hi", "Hindi"), ("id", "Indonesian"), ("it", "Italian"),
+    ("ja", "Japanese"), ("ko", "Korean"), ("pl", "Polish"), ("pt", "Portuguese"), ("ru", "Russian"),
+    ("es", "Spanish"), ("ta", "Tamil"), ("te", "Telugu"), ("th", "Thai"), ("tr", "Turkish"),
+    ("uk", "Ukrainian"), ("vi", "Vietnamese"),
+]
+_LANG_CODE = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*")
+
+
+def _language_name(f: dict) -> str:
+    """"Spanish" from YouTube's "Spanish, low" / "English original (default), low"."""
+    note = (f.get("format_note") or "").split(",")[0]
+    note = re.sub(r"\s*\((default)\)|\s+original\b", "", note).strip()
+    return note or f.get("language") or "Unknown"
+
+
+def _is_original(f: dict) -> bool:
+    return "original" in (f.get("format_note") or "") or (f.get("language_preference") or -1) >= 10
+
+
+def audio_languages(formats: list) -> list[tuple[str, str, bool]]:
+    """[(code, name, is_original)] of a video's dubbed audio tracks, original first.
+    Empty unless there's more than one language to choose from."""
+    langs: dict[str, tuple[str, bool]] = {}
+    for f in formats:
+        code = f.get("language")
+        if not code or f.get("has_drm") or f.get("acodec") in (None, "none") or f.get("vcodec") != "none" \
+                or not _LANG_CODE.fullmatch(code):
+            continue  # only audio-only tracks: their notes name the language, video ones say "360p"
+        name, original = langs.get(code, (None, False))
+        langs[code] = (name or _language_name(f), original or _is_original(f))
+    if len(langs) < 2:
+        return []
+    return sorted(((c, n, o) for c, (n, o) in langs.items()), key=lambda x: (not x[2], x[1].lower()))
+
+
+def split_variant(variant: str | None) -> tuple[str | None, str | None]:
+    """"1080@es" -> ("1080", "es"): a quality plus the audio language, if one was picked."""
+    if variant and "@" in variant:
+        quality, _, lang = variant.rpartition("@")
+        if _LANG_CODE.fullmatch(lang):
+            return quality or None, lang
+    return variant, None
 
 
 def list_variants(url: str, headers: dict | None = None) -> tuple[str, list[Variant]]:
@@ -252,13 +300,18 @@ def list_variants(url: str, headers: dict | None = None) -> tuple[str, list[Vari
 
 
 def _format_for(variant: str | None) -> str:
+    variant, lang = split_variant(variant)
+    # yt-dlp tries each "/" alternative in turn. With a language: that exact track, else a
+    # regional version of it ("es" -> "es-419"), else what it picks anyway (the original).
+    langs = [f"[language={lang}]", f"[language^={lang}-]", ""] if lang else [""]
     if variant == "audio":
-        return "ba[ext=m4a]/ba"
+        return "/".join(f"{a}{l}" for l in langs for a in ("ba[ext=m4a]", "ba"))
     if variant and variant.startswith("fmt:"):
         return f"{variant[4:]}/bv*+ba/b"
     if variant and variant.isdigit():
-        return f"bv*[height<={variant}]+ba/b[height<={variant}]/bv*+ba/b"
-    return "bv*+ba/b"
+        video = f"bv*[height<={variant}]"
+        return "/".join([*(f"{video}+ba{l}" for l in langs), f"b[height<={variant}]", "bv*+ba/b"])
+    return "/".join([*(f"bv*+ba{l}" for l in langs), "b"])
 
 
 class YtdlTask(StreamTask):
@@ -370,7 +423,8 @@ class YtdlTask(StreamTask):
                 if not self.thumbnail:
                     self.thumbnail = info.get("thumbnail") or next(
                         (t.get("url") for t in reversed(info.get("thumbnails") or []) if t.get("url")), None)
-                if not self._named:
+                fresh = not self._named
+                if fresh:
                     title = info.get("title") or info.get("id") or "video"
                     if entries is not None and len(entries) > 1:
                         title += f" ({item} of {len(entries)})"
@@ -384,14 +438,18 @@ class YtdlTask(StreamTask):
                     if not picked:
                         raise DownloadError(f"Video {item} of this post couldn't be read.")
                     chosen = picked[0]
+                formats = chosen.get("requested_formats") or [chosen]
+                dub = next((f for f in formats if split_variant(self.variant)[1] and f.get("language")
+                            and f.get("acodec") not in (None, "none") and not _is_original(f)), None)
+                if dub and fresh and not self.filename:
+                    self.stem = _safe_stem(f"{self.stem} ({_language_name(dub)})")  # beside the original
                 ext = "." + chosen.get("ext", "mp4")
                 if not (self.filename == self.stem + ext and self.parts_dir.is_dir()):
                     self._reserve_name(ext)  # else: resuming into our own folder
                 self._save_plan()
                 ydl.params["paths"] = {"home": str(self.dest_dir), "temp": str(self.parts_dir)}
                 ydl.params["outtmpl"] = {"default": self.stem + ".%(ext)s"}
-                formats = chosen.get("requested_formats") or [chosen]
-                self.quality = " + ".join(_describe(f) for f in formats)
+                self.quality = " + ".join(_describe(f) for f in formats) + (f" · {_language_name(dub)}" if dub else "")
                 with self._lock:
                     self._progress = {f["format_id"]: [0, f.get("filesize") or f.get("filesize_approx") or 0]
                                       for f in formats}
