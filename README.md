@@ -49,7 +49,7 @@ The installed app and a copy run from source share the browser connection. Which
 - **If something goes wrong.** PyDM keeps running after an unexpected error. It says so once, and writes the details to `%LOCALAPPDATA%\PyDM\logs\pydm.log`, with hard crashes in `crash.log`. Settings → About → **Open log folder**. Send that file when reporting a problem. Downloads finishing or failing, update checks and virus scans are logged too. (`pydm/log.py`)
 - **Keys.** `Space` pauses or resumes the selection, `Enter` opens a finished file, and `Ctrl+E` shows it in its folder. Right-click a download for more.
 - **Tray.** Closing the window keeps PyDM in the notification area, so downloads continue. Notifications say when a download finishes (click one to open the folder) or fails. Both can be changed in Settings.
-- **Settings.** Light, dark or "match Windows". Default folder, connections, and how many downloads run at once. The browser connection's status, with a **Repair connection** button. **About** shows the bundled component versions.
+- **Settings.** Light, dark or "match Windows" (or one click on the moon/sun button in the toolbar). Default folder, connections, and how many downloads run at once. The browser connection's status, with a **Repair connection** button. **About** shows the bundled component versions.
 
 ## Run from source
 

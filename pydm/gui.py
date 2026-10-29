@@ -424,6 +424,7 @@ class CheckDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         style = opt.widget.style() if opt.widget else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, p, opt.widget)
+        _draw_hover(p, option, index)
         draw_checkbox(p, option.rect, 2 if option.state & QStyle.StateFlag.State_Selected else 0)
 
 
@@ -450,6 +451,23 @@ def _draw_background(delegate, p: QPainter, option, index) -> None:
     opt.text, opt.icon = "", QIcon()
     style = opt.widget.style() if opt.widget else QApplication.style()
     style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, p, opt.widget)
+    _draw_hover(p, option, index)
+
+
+def _draw_hover(p: QPainter, option, index) -> None:
+    """The whole row under the mouse is tinted (Qt's own :hover is per cell)."""
+    table = option.widget
+    if table is not None and index.row() == table.property("hover_row") \
+            and not option.state & QStyle.StateFlag.State_Selected:
+        p.fillRect(option.rect, QColor(theme.colors["hover"]))
+
+
+class PlainDelegate(QStyledItemDelegate):
+    """Default look plus the row hover tint (compact view's text columns)."""
+
+    def paint(self, p: QPainter, option, index):
+        _draw_hover(p, option, index)
+        super().paint(p, option, index)
 
 
 class NameDelegate(QStyledItemDelegate):
@@ -585,6 +603,7 @@ class ProgressDelegate(QStyledItemDelegate):
         opt.text = ""
         style = opt.widget.style() if opt.widget else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, p, opt.widget)  # hover/selection
+        _draw_hover(p, option, index)
         data = index.data(DATA)
         if not data:
             return
@@ -1818,6 +1837,22 @@ class MainWindow(QMainWindow):
         self._search_action = self.search.addAction(theme.icon("search"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(lambda _: self.refresh())
         tb.addWidget(self.search)
+        # Light/dark: one click switches; the arrow also offers "Match Windows".
+        self.theme_button = QToolButton()
+        self.theme_button.setObjectName("themeButton")
+        self.theme_button.setIconSize(QSize(18, 18))
+        self.theme_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.theme_button.clicked.connect(self.toggle_dark)
+        self.theme_menu = QMenu(self)
+        for key, label in SettingsDialog.THEMES:
+            a = self.theme_menu.addAction(label)
+            a.setCheckable(True)
+            a.setData(key)
+            a.triggered.connect(lambda _, key=key: self.set_theme(key))
+        self.theme_menu.aboutToShow.connect(lambda: [a.setChecked(a.data() == self.settings.value("theme", "system"))
+                                                     for a in self.theme_menu.actions()])
+        self.theme_button.setMenu(self.theme_menu)
+        tb.addWidget(self.theme_button)
         self.view_button = QToolButton()
         self.view_button.setDefaultAction(self.act_view)
         self.view_button.setIconSize(QSize(18, 18))
@@ -1880,6 +1915,9 @@ class MainWindow(QMainWindow):
         self.table.setItemDelegateForColumn(COL_STATUS, StatusPillDelegate(self.table))
         self.table.setItemDelegateForColumn(COL_ACTIONS, ActionsDelegate(self))
         self.scroller = SmoothScroller(self.table, lambda: self.table.verticalHeader().defaultSectionSize())
+        for col in (COL_SIZE, COL_SPEED, COL_ETA, COL_ADDED):
+            self.table.setItemDelegateForColumn(col, PlainDelegate(self.table))
+        self.table.setProperty("hover_row", -1)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.itemSelectionChanged.connect(self.refresh)
@@ -2118,13 +2156,20 @@ class MainWindow(QMainWindow):
         for i in range(self.sidebar.count()):
             item = self.sidebar.item(i)
             key = item.data(DATA)
-            if key and not key.startswith("queue:"):
+            if key and key.startswith("queue:"):
+                item.setData(HEADER, None)  # _update_sidebar redraws it (play icon if running)
+                item.setIcon(theme.icon("calendar"))
+            elif key:
                 color = theme.TYPES[key][1] if key in theme.TYPES else None
                 item.setIcon(theme.icon(dict((c[0], c[2]) for c in CATEGORIES if c)[key], color))
             elif not key:
                 item.setForeground(QColor(theme.colors["muted"]))
         if hasattr(self, "act_view"):
             self.act_view.setIcon(theme.icon(self.act_view.data() or "columns"))
+        if hasattr(self, "theme_button"):
+            dark = self.is_dark()
+            self.theme_button.setIcon(theme.icon("sun" if dark else "moon"))
+            self.theme_button.setToolTip("Switch to light mode" if dark else "Switch to dark mode")
         self.btn_open.setIcon(theme.icon("open"))
         self.btn_refresh.setIcon(theme.icon("retry"))
         self.btn_folder.setIcon(theme.icon("folder"))
@@ -2139,6 +2184,16 @@ class MainWindow(QMainWindow):
         self.apply_icons()
         style_title_bar(self)
         self.refresh()
+
+    def is_dark(self) -> bool:
+        return theme.colors["bg"] == theme.DARK["bg"]
+
+    def set_theme(self, mode: str):
+        self.settings.setValue("theme", mode)
+        self.apply_theme()
+
+    def toggle_dark(self):
+        self.set_theme("light" if self.is_dark() else "dark")
 
     # --- refresh loop ---
 
@@ -2648,8 +2703,9 @@ class MainWindow(QMainWindow):
             label = f"In {q.name}" if q and s["id"] not in q.tried else "Paused"
             sub = "  ·  ".join(x for x in (label, of, pct) if x)
         bar = None
-        if status not in (Status.COMPLETED, Status.CANCELLED) and not alert:
-            bar = (None if status == Status.MERGING else s["progress"], status)
+        running = status in Status.ACTIVE
+        if status not in (Status.COMPLETED, Status.CANCELLED) and not alert and (running or s["progress"]):
+            bar = (None if status == Status.MERGING else s["progress"], status)  # None: sliding (size unknown)
         name = s["filename"] or s["url"].rsplit("/", 1)[-1] or s["url"]
         return {"title": name, "subtitle": sub, "alert": alert, "bar": bar,
                 "type": theme.file_type(name, s["kind"]), "thumbnail": s.get("thumbnail")}
@@ -2990,9 +3046,11 @@ class MainWindow(QMainWindow):
                 row = index.row() if index.isValid() else -1
                 if row != self._hover_row or (index.isValid() and index.column() == COL_ACTIONS):
                     self._hover_row, self._hover_pos = row, pos
+                    self.table.setProperty("hover_row", row)
                     self.table.viewport().update()
             elif t == QEvent.Type.Leave:
                 self._hover_row, self._hover_pos = -1, None
+                self.table.setProperty("hover_row", -1)
                 self.table.viewport().update()
             elif t == QEvent.Type.ToolTip:
                 row, action = self._row_action_at(event.pos())

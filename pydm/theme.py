@@ -104,7 +104,7 @@ QListWidget#sidebar::item:selected {{ background: {selection}; color: {text}; fo
 QTableView {{ background: {surface}; border: none; outline: none; gridline-color: transparent;
               selection-background-color: {selection}; selection-color: {text}; }}
 QTableView::item {{ border-bottom: 1px solid {border}; padding-left: 6px; }}
-QTableView::item:hover {{ background: {hover}; }}
+QTableView::item:hover {{ background: transparent; }}
 QTableView::item:selected {{ background: {selection}; color: {text}; }}
 QHeaderView::section {{ background: {surface}; color: {muted}; border: none; border-bottom: 1px solid {border};
                         padding: 7px 8px; font-weight: 600; font-size: 9pt; }}
@@ -128,6 +128,9 @@ QFrame#card {{ background: {surface}; border: 1px solid {border}; border-radius:
 QSplitter::handle {{ background: {border}; }}
 QStatusBar {{ background: {surface}; border-top: 1px solid {border}; color: {muted}; }}
 QStatusBar::item {{ border: none; }}
+QToolButton#themeButton {{ border: none; border-radius: 6px; padding: 6px 4px 6px 8px; }}
+QToolButton#themeButton:hover {{ background: {hover}; }}
+QToolButton#themeButton::menu-button {{ border: none; width: 14px; }}
 QToolButton#limitButton {{ border: none; border-radius: 5px; padding: 2px 8px; color: {muted}; }}
 QToolButton#limitButton:hover {{ background: {hover}; color: {text}; }}
 QToolButton#limitButton::menu-indicator {{ image: none; }}
@@ -199,6 +202,9 @@ PATHS = {
     "columns": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 14.5h18M9 9.5v10.5"/>',
     "rows": '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/>',
     "gauge": '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41'
+           'M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+    "moon": '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
     "theme": '<circle cx="12" cy="12" r="9.5"/><path d="M12 2.5a9.5 9.5 0 0 0 0 19z" fill="{color}"/>',
 }
 

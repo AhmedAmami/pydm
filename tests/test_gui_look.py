@@ -227,6 +227,43 @@ wheel(angle=-15, pixels=-25)  # a touchpad: small pixel steps
 pump(0.05)
 check("touchpads scroll by their own pixels, straight away", bar.value() - start == 25, f"{start} -> {bar.value()}")
 
+check("a paused download with nothing downloaded has no (sliding) bar",
+      win.table.item(win._row_ids.index(win.manager.tasks[-1].id), COL_NAME).data(ROW)["bar"] is None)
+row = 3
+QTest.mouseMove(win.table.viewport(), win.table.visualRect(win.table.model().index(row, COL_NAME)).center())
+pump(0.1)
+check("hovering tints the whole row (not just one cell)", win.table.property("hover_row") == row)
+
+# --- light/dark switch in the toolbar ---
+win.set_theme("light")
+check("theme button: shows a moon in light mode", win.theme_button.toolTip() == "Switch to dark mode")
+win.theme_button.click()
+check("one click switches to dark", win.is_dark() and win.settings.value("theme") == "dark"
+      and win.theme_button.toolTip() == "Switch to light mode")
+win.refresh()
+queue_item = next(win.sidebar.item(i) for i in range(win.sidebar.count())
+                  if (win.sidebar.item(i).data(gui.DATA) or "").startswith("queue:"))
+check("queue icons follow the theme", not queue_item.icon().isNull())
+if SHOT:
+    QTest.mouseMove(win.table.viewport(), win.table.visualRect(win.table.model().index(2, COL_NAME)).center())
+    pump(0.1)
+    win.grab().save(f"{SHOT}-dark.png")
+win.theme_button.click()
+check("…and back to light", not win.is_dark() and win.settings.value("theme") == "light")
+next(a for a in win.theme_menu.actions() if a.data() == "system").trigger()
+check("the arrow menu offers 'Match Windows'", win.settings.value("theme") == "system")
+win.set_theme("dark")
+win.manager.shutdown()
+win.ipc_server.close()
+reopened = MainWindow()
+reopened.apply_theme()
+check("the choice is kept after a restart", reopened.is_dark())
+reopened.set_theme("light")
+reopened.manager.shutdown()
+reopened.ipc_server.close()
+win = MainWindow()
+win.manager.tasks.clear()
+
 # --- compact view, remembered ---
 win.act_view.trigger()
 check("switching to compact shows the columns and hides the buttons", not win.comfortable

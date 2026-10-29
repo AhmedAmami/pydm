@@ -7,6 +7,8 @@
 - **The title bar matches the app**, including in dark mode, on Windows 11.
 - **Clearer errors.** For example, "Not found on the server (404)" or "Access denied: the link may have expired (403)".
 - **Compact view.** Prefer the old columns? Use the view button next to Settings.
+- **Dark mode in one click.** Click the moon/sun button in the toolbar. Its small arrow also offers *Match Windows*.
+- **Smoother scrolling.** One row per mouse-wheel notch, with a short glide.
 
 If you already have PyDM, just run the new installer: your downloads and settings stay.
 
