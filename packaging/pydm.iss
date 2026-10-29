@@ -5,7 +5,7 @@
 ; registers the browser connector under HKCU, like the app does from source.
 
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.3.1"
 #endif
 
 [Setup]

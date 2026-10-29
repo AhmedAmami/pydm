@@ -303,15 +303,16 @@ def _format_for(variant: str | None) -> str:
     variant, lang = split_variant(variant)
     # yt-dlp tries each "/" alternative in turn. With a language: that exact track, else a
     # regional version of it ("es" -> "es-419"), else what it picks anyway (the original).
-    langs = [f"[language={lang}]", f"[language^={lang}-]", ""] if lang else [""]
+    # The dubbed track goes with a video-only stream ("bv", not "bv*"): signed in, YouTube
+    # also lists videos with the original audio built in, and yt-dlp would keep that audio.
+    dubs = [f"[language={lang}]", f"[language^={lang}-]"] if lang else []
     if variant == "audio":
-        return "/".join(f"{a}{l}" for l in langs for a in ("ba[ext=m4a]", "ba"))
+        return "/".join(f"{a}{l}" for l in [*dubs, ""] for a in ("ba[ext=m4a]", "ba"))
     if variant and variant.startswith("fmt:"):
         return f"{variant[4:]}/bv*+ba/b"
-    if variant and variant.isdigit():
-        video = f"bv*[height<={variant}]"
-        return "/".join([*(f"{video}+ba{l}" for l in langs), f"b[height<={variant}]", "bv*+ba/b"])
-    return "/".join([*(f"bv*+ba{l}" for l in langs), "b"])
+    height = f"[height<={variant}]" if variant and variant.isdigit() else ""
+    alternatives = [*(f"bv{height}+ba{l}" for l in dubs), f"bv*{height}+ba", f"b{height}"]
+    return "/".join(alternatives + (["bv*+ba/b"] if height else []))
 
 
 class YtdlTask(StreamTask):

@@ -1,3 +1,7 @@
+## PyDM 1.3.1
+
+- **Fixed: a dubbed language could download in the original language.** When the video came from the browser (signed in to YouTube), some videos were saved with their original audio even though another language was picked. Now the chosen language is used.
+
 ## PyDM 1.3.0
 
 - **Videos in other languages.** Many YouTube videos come dubbed (MrBeast's in over 20 languages, for example). When a video has dubbed audio, the Add window shows an **Audio** choice next to Quality: pick Spanish, Arabic, French... and PyDM downloads the video with that soundtrack, saved as *Title (Spanish).mp4* next to the original.
@@ -31,7 +35,7 @@ PyDM is a free download manager for Windows. It downloads files faster by using 
 
 ### Install
 
-1. Download **PyDM-Setup-1.3.0.exe** below, under *Assets*.
+1. Download **PyDM-Setup-1.3.1.exe** below, under *Assets*.
 2. Run it. Windows may show **"Windows protected your PC"** because the installer isn't signed. Click **More info**, then **Run anyway**.
 3. Click through the setup. It installs only for you, so it doesn't need an administrator.
 

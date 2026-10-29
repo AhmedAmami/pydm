@@ -77,6 +77,15 @@ check("missing language falls back to original", pick("720@de") == ["v720", "en"
 check("audio only, dubbed", pick("audio@es") == ["es"], str(pick("audio@es")))
 check("audio only, webm when that's the only one", pick("audio@fr") == ["frw"], str(pick("audio@fr")))
 
+# Signed in (browser cookies), YouTube also lists HLS videos with the original audio built in.
+# Picked as "best video", yt-dlp drops the separate dubbed track and the download is in English.
+FORMATS += [{"format_id": "hls1080", "url": "https://x.invalid/hls1080", "ext": "mp4", "vcodec": "avc1",
+             "acodec": "mp4a", "height": 1080, "width": 1920, "language": "en", "format_note": "1080p"},
+            video("v1080", 1080)]
+check("dub at 1080 with a built-in-audio video around", pick("1080@es") == ["v1080", "es"], str(pick("1080@es")))
+check("best with a dub too", pick("best@ar") == ["v1080", "ar"], str(pick("best@ar")))
+check("no dub: unchanged choice", pick("1080")[0] in ("hls1080", "v1080"), str(pick("1080")))
+
 # --- the Add dialog -----------------------------------------------------------
 app = QApplication([])
 app.setApplicationName("PyDM-lang-test")
