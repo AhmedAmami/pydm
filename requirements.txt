@@ -1,0 +1,5 @@
+PyQt6>=6.6
+requests>=2.31
+imageio-ffmpeg>=0.5
+yt-dlp[default]>=2026.10.26
+deno>=2.0

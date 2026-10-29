@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; --muted: #757575; --line: #8884; }
+  body { font: 13px system-ui, sans-serif; width: 340px; margin: 12px; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  h2 { font-size: 13px; margin: 14px 0 6px; }
+  label { display: block; margin: 8px 0 4px; }
+  textarea { width: 100%; box-sizing: border-box; height: 80px; font: 12px monospace; }
+  input[type=number] { width: 80px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  #status, .note { font-size: 12px; }
+  .note { color: var(--muted); }
+  .ok { color: #2e7d32; } .bad { color: #c62828; }
+  #media { display: flex; flex-direction: column; gap: 6px; }
+  .item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px; background: #1565c0; color: #fff; }
+  details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>PyDM</h1>
+  <h2>Videos on this page</h2>
+  <div id="media"></div>
+  <div class="note" id="media-note"></div>
+
+  <details>
+    <summary>Settings</summary>
+    <label><input type="checkbox" id="enabled"> Capture downloads</label>
+    <label><input type="checkbox" id="videoButton"> Show a Download button on videos</label>
+    <label for="extensions">File types to capture</label>
+    <textarea id="extensions" spellcheck="false"></textarea>
+    <label>Ignore files smaller than <input type="number" id="minSizeKB" min="0"> KB</label>
+    <div class="row">
+      <button id="test">Test connection</button>
+      <span id="status"></span>
+    </div>
+  </details>
+  <script src="sites.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

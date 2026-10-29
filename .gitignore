@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Build output (the installer is attached to GitHub Releases, not committed)
+build/
+dist/
+
+# Written by install_browser on each PC (contains local paths)
+native_host/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
