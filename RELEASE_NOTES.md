@@ -1,3 +1,7 @@
+## PyDM 1.1.1
+
+- **Smoother scrolling on fast monitors.** The list now scrolls at your screen's refresh rate (120, 144, 165 Hz…) instead of about 60 frames per second, and quick wheel spins flow into each other.
+
 ## PyDM 1.1.0
 
 ### What's new
@@ -17,7 +21,7 @@ PyDM is a free download manager for Windows. It downloads files faster by using 
 
 ### Install
 
-1. Download **PyDM-Setup-1.1.0.exe** below, under *Assets*.
+1. Download **PyDM-Setup-1.1.1.exe** below, under *Assets*.
 2. Run it. Windows may show **"Windows protected your PC"** because the installer isn't signed. Click **More info**, then **Run anyway**.
 3. Click through the setup. It installs only for you, so it doesn't need an administrator.
 

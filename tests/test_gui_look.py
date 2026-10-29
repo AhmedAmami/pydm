@@ -222,6 +222,8 @@ wheel(angle=-120)
 wheel(angle=-120)
 pump(0.5)
 check("quick notches add up", abs(bar.value() - start - 2 * round(row_h * lines / 3)) <= 2, f"{start} -> {bar.value()}")
+check("the frame timer (and Windows' 1 ms timer precision) stops once the list rests",
+      not win.scroller.timer.isActive() and win.scroller.target is None)
 start = bar.value()
 wheel(angle=-15, pixels=-25)  # a touchpad: small pixel steps
 pump(0.05)

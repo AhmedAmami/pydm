@@ -3,6 +3,7 @@ task snapshots on a timer, so no Qt objects are touched off the GUI thread."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -12,7 +13,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QTime, QVariantAnimation, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QPointF, QRect, QRectF, QTime, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QAction, QColor, QDesktopServices, QGuiApplication, QIcon, QFont, QFontMetrics, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
 )
@@ -222,12 +223,17 @@ def style_title_bar(widget) -> None:
 
 
 class SmoothScroller(QObject):
-    """Mouse-wheel scrolling that glides: each notch moves about one row (scaled by
-    Windows' "lines to scroll" setting) with a short eased animation, and quick
-    wheel spins add up instead of jumping. Touchpads send pixel deltas and already
-    scroll smoothly, so those pass straight through."""
+    """Mouse-wheel scrolling that glides at the monitor's refresh rate.
 
-    DURATION = 220  # ms per glide
+    Qt's own animations tick at about 60 fps, which looks steppy on a 120-165 Hz
+    screen. This drives the scroll bar from its own precise timer at the screen's
+    rate instead, easing towards a target: each wheel notch moves the target about
+    one row (scaled by Windows' "lines to scroll" setting), and further notches
+    just move the target, so the motion carries on smoothly instead of restarting.
+    Touchpads send pixel deltas and already scroll smoothly; those pass straight
+    through."""
+
+    TAU = 0.055  # s; the glide settles within ~4 TAU (about 0.2 s)
 
     def __init__(self, view, step=None):
         super().__init__(view)
@@ -235,16 +241,54 @@ class SmoothScroller(QObject):
         self.bar = view.verticalScrollBar()
         self.step = step or (lambda: 40)
         self.target = None
-        self.anim = QVariantAnimation(self)
-        self.anim.setDuration(self.DURATION)
-        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.anim.valueChanged.connect(lambda v: self.bar.setValue(int(v)))
-        self.anim.finished.connect(self._done)
+        self.pos = 0.0
+        self._last = 0.0
+        self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.timer.timeout.connect(self._tick)
         view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         view.viewport().installEventFilter(self)
 
-    def _done(self):
-        self.target = None
+    def _frame_ms(self) -> int:
+        screen = self.view.screen() or QGuiApplication.primaryScreen()
+        hz = screen.refreshRate() if screen else 60.0
+        return max(4, min(16, int(1000 / max(hz, 30.0))))
+
+    def _tick(self):
+        now = time.perf_counter()
+        dt, self._last = now - self._last, now
+        if self.target is None:
+            self._stop()
+            return
+        if abs(round(self.pos) - self.bar.value()) > 2:
+            self.pos = float(self.bar.value())  # something else moved the list (scroll bar drag, keys)
+        self.pos += (self.target - self.pos) * (1.0 - math.exp(-dt / self.TAU))
+        if abs(self.target - self.pos) < 0.5:
+            self.pos = float(self.target)
+            self.target = None
+            self._stop()
+        self.bar.setValue(round(self.pos))
+
+    @staticmethod
+    def _timer_precision(on: bool) -> None:
+        """Windows timers tick every ~15.6 ms unless asked otherwise; during a glide
+        ask for 1 ms so frames can follow a 120-165 Hz screen (released right after)."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                (ctypes.windll.winmm.timeBeginPeriod if on else ctypes.windll.winmm.timeEndPeriod)(1)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _start(self):
+        if not self.timer.isActive():
+            self._timer_precision(True)
+            self.timer.start(self._frame_ms())
+
+    def _stop(self):
+        if self.timer.isActive():
+            self.timer.stop()
+            self._timer_precision(False)
 
     def eventFilter(self, obj, event):
         if event.type() != QEvent.Type.Wheel or event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -252,7 +296,7 @@ class SmoothScroller(QObject):
         pixels = event.pixelDelta().y()
         notches = event.angleDelta().y() / 120
         if pixels and not event.angleDelta().y() % 120 == 0:  # touchpad: already smooth
-            self.anim.stop()
+            self._stop()
             self.target = None
             self.bar.setValue(self.bar.value() - pixels)
             return True
@@ -260,12 +304,12 @@ class SmoothScroller(QObject):
             return False
         lines = max(1, QApplication.wheelScrollLines())
         distance = notches * self.step() * lines / 3  # Windows default (3 lines) -> one row per notch
+        if self.target is None:  # starting a new glide from where the list is now
+            self.pos = float(self.bar.value())
+            self._last = time.perf_counter()
         start = self.target if self.target is not None else self.bar.value()
         self.target = max(self.bar.minimum(), min(self.bar.maximum(), round(start - distance)))
-        self.anim.stop()
-        self.anim.setStartValue(self.bar.value())
-        self.anim.setEndValue(self.target)
-        self.anim.start()
+        self._start()
         return True
 
 
