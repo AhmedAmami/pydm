@@ -20,13 +20,13 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QSystemTrayIcon,
+    QMessageBox, QProgressBar, QPushButton, QSpinBox, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QSystemTrayIcon,
     QTableWidget, QTableWidgetItem, QTabWidget, QTimeEdit, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from PyQt6.QtNetwork import QLocalServer
 
-from . import __version__, buildcheck, install_browser, ipc, scan, streams, theme, updates, ytdl
+from . import __version__, app_update, buildcheck, install_browser, ipc, scan, streams, theme, updates, ytdl
 from . import log as pydm_log
 from .log import log
 from .engine import DownloadManager, DownloadTask, Status, probe_size
@@ -1598,6 +1598,118 @@ class SettingsDialog(QDialog):
         return self.theme.currentData()
 
 
+class AppUpdateDialog(QDialog):
+    """Offer a newer PyDM; on "Update now" download its installer (checked against
+    GitHub's checksum), then close PyDM and run it. The installer starts PyDM again
+    and paused downloads carry on."""
+
+    def __init__(self, window, release: dict, parent=None):
+        super().__init__(parent or window)
+        self.window_, self.release = window, release
+        self.setWindowTitle("Update PyDM")
+        self.setMinimumWidth(480)
+        self._progress: list = []   # (done, total), from the download thread
+        self._result: list = []     # ("ok", path) or ("error", message)
+        self._cancel = False
+        intro = QLabel(f"PyDM {release['version']} is available. You have {__version__}.<br>"
+                       "Your downloads, queues and settings are kept. Running downloads pause and "
+                       "carry on after the update.")
+        intro.setWordWrap(True)
+        self.bar = QProgressBar()
+        self.bar.setTextVisible(False)
+        self.bar.setVisible(False)
+        self.status = QLabel()
+        self.status.setProperty("muted", True)
+        self.status.setWordWrap(True)
+        notes = QPushButton("What's new")
+        notes.setProperty("flat", True)
+        notes.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(release["page"])))
+        self.later = QPushButton("Later")
+        self.later.clicked.connect(self._later)
+        self.go = primary(QPushButton("Update now"))
+        self.go.setDefault(True)
+        self.go.clicked.connect(self.start)
+        buttons = QHBoxLayout()
+        buttons.addWidget(notes)
+        buttons.addStretch()
+        buttons.addWidget(self.later)
+        buttons.addWidget(self.go)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(12)
+        layout.addWidget(dialog_header("Update available", f"PyDM {release['version']}"))
+        layout.addWidget(intro)
+        layout.addWidget(self.bar)
+        layout.addWidget(self.status)
+        layout.addLayout(buttons)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._poll)
+
+    def start(self):
+        if not app_update.FROZEN:  # running from source: there's nothing to install over
+            QDesktopServices.openUrl(QUrl(self.release["page"]))
+            self._say("PyDM is running from source, so the release page was opened instead.")
+            return
+        self.go.setEnabled(False)
+        self.later.setText("Cancel")
+        self.bar.setVisible(True)
+        self.bar.setRange(0, 0)
+        self._say("Downloading…")
+        self._cancel = False
+
+        def work():
+            try:
+                path = app_update.download(self.release, lambda d, t: self._progress.append((d, t)),
+                                           lambda: self._cancel)
+                self._result.append(("ok", path))
+            except Exception as e:  # noqa: BLE001 - shown in the dialog
+                self._result.append(("error", str(e) or e.__class__.__name__))
+        threading.Thread(target=work, daemon=True, name="app-download").start()
+        self._timer.start(100)
+
+    def _poll(self):
+        if self._progress:
+            done, total = self._progress[-1]
+            self._progress.clear()
+            if total:
+                self.bar.setRange(0, 1000)
+                self.bar.setValue(int(done * 1000 / total))
+                self._say(f"Downloading… {human_size(done)} of {human_size(total)}")
+        if not self._result:
+            return
+        self._timer.stop()
+        kind, detail = self._result.pop()
+        if kind == "ok":
+            self._say("Installing… PyDM will close and open again in a moment.")
+            QApplication.processEvents()
+            self.accept()
+            self.window_.restart_app(installer=detail)
+            return
+        self.bar.setVisible(False)
+        self.go.setEnabled(True)
+        self.go.setText("Try again")
+        self.later.setText("Later")
+        if self._cancel:
+            self._say("Cancelled.")
+            return
+        log.warning("PyDM update download failed: %s", detail)
+        self._say(f"The update couldn't be downloaded: {detail}", error=True)
+
+    def _later(self):
+        if self._timer.isActive():
+            self._cancel = True  # _poll finishes up once the download thread stops
+        else:
+            self.reject()
+
+    def reject(self):
+        self._cancel = True
+        super().reject()
+
+    def _say(self, text: str, error: bool = False):
+        color = theme.colors["danger"] if error else theme.colors["muted"]
+        self.status.setText(f"<span style='color:{color}'>{text}</span>")
+
+
 class AboutPage(QWidget):
     """Version and the bundled tools; filled in the background (running ffmpeg/Deno takes a moment)."""
 
@@ -1635,6 +1747,7 @@ class AboutPage(QWidget):
         logs.clicked.connect(lambda: (pydm_log.folder().mkdir(parents=True, exist_ok=True),
                                       QDesktopServices.openUrl(QUrl.fromLocalFile(str(pydm_log.folder())))))
         layout.addWidget(logs)
+        layout.addWidget(self._app_updates_card(window))
         row = QHBoxLayout()
         row.addWidget(self.check_btn)
         row.addWidget(self.restart_btn)
@@ -1650,6 +1763,54 @@ class AboutPage(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._show)
         self._timer.start(150)
+
+    def _app_updates_card(self, window) -> QFrame:
+        box = QFrame()
+        box.setObjectName("card")
+        col = QVBoxLayout(box)
+        col.setContentsMargins(12, 10, 12, 10)
+        self.app_auto = QCheckBox("Tell me when a new version of PyDM is out (checks GitHub once a day)")
+        self.app_auto.setChecked(window.settings.value("check_app_updates", True, type=bool) if window else True)
+        self.app_auto.toggled.connect(lambda v: window and window.settings.setValue("check_app_updates", v))
+        self.app_check_btn = QPushButton(theme.icon("retry"), "Check for PyDM updates")
+        self.app_check_btn.clicked.connect(self._check_app)
+        self.app_install_btn = primary(QPushButton("Update now"))
+        self.app_install_btn.clicked.connect(lambda: window and window.update_app(self))
+        self.app_status = QLabel()
+        self.app_status.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(self.app_check_btn)
+        row.addWidget(self.app_install_btn)
+        row.addWidget(self.app_status, 1)
+        col.addWidget(QLabel("<b>PyDM updates</b>"))
+        col.addWidget(self.app_auto)
+        col.addLayout(row)
+        self._show_app_state()
+        return box
+
+    def _check_app(self):
+        if not self.window_:
+            return
+        self.app_check_btn.setEnabled(False)
+        self.app_status.setText("Checking…")
+        self.window_.check_app_update(auto=False, on_done=lambda _: self._show_app_state())
+
+    def _show_app_state(self):
+        w = self.window_
+        release = w and w._app_release
+        self.app_install_btn.setVisible(bool(release))
+        self.app_check_btn.setEnabled(not (w and w._app_busy))
+        if w and w._app_busy:
+            text = "Checking…"
+        elif release:
+            text = f"PyDM {release['version']} is available (you have {__version__})."
+        elif w and w._app_last and w._app_last[0] == "error":
+            text = f"Couldn't check: {w._app_last[1]}"
+        elif w and w._app_last:
+            text = f"You have the latest PyDM ({__version__})."
+        else:
+            text = f"PyDM {__version__}."
+        self.app_status.setText(text)
 
     def _check(self):
         if not self.window_:
@@ -1779,6 +1940,12 @@ class MainWindow(QMainWindow):
         self._update_ready: str | None = None   # a verified yt-dlp waiting for a restart
         self._update_last = None
         QTimer.singleShot(20_000, lambda: self.check_ytdlp_update(auto=True))
+        self._app_results: list = []         # filled by the PyDM update check thread
+        self._app_listeners: list = []
+        self._app_busy = False
+        self._app_release: dict | None = None   # a newer PyDM on GitHub
+        self._app_last = None
+        QTimer.singleShot(30_000, lambda: self.check_app_update(auto=True))
         QTimer.singleShot(0, self._resume_after_restart)
         self._scans: dict = {}               # task id -> "scanning" or scan.ScanResult (this session)
         self._scan_results: list = []        # filled by the scan thread
@@ -2140,6 +2307,12 @@ class MainWindow(QMainWindow):
         self.update_button.clicked.connect(self.restart_app)
         self.update_button.setVisible(False)
         self.statusBar().addWidget(self.update_button)
+        self.app_update_button = QPushButton()
+        self.app_update_button.setProperty("flat", True)
+        self.app_update_button.setToolTip("A new version of PyDM is available")
+        self.app_update_button.clicked.connect(lambda: self.update_app())
+        self.app_update_button.setVisible(False)
+        self.statusBar().addWidget(self.app_update_button)
         self.status_label = QLabel()
         self.statusBar().addPermanentWidget(self.status_label)
         self.statusBar().setSizeGripEnabled(False)
@@ -2271,6 +2444,8 @@ class MainWindow(QMainWindow):
                                           QSystemTrayIcon.MessageIcon.Warning, 8000)
         while self._update_results:
             self._update_done(self._update_results.pop(0))
+        while self._app_results:
+            self._app_update_done(self._app_results.pop(0))
         while self._scan_results:
             self._scan_done(*self._scan_results.pop(0))
 
@@ -2847,10 +3022,11 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass  # its dialog was closed meanwhile
 
-    def restart_app(self):
-        """Restart PyDM (to load a new yt-dlp). Running downloads pause and carry on afterwards."""
+    def restart_app(self, installer: Path | None = None):
+        """Restart PyDM (to load a new yt-dlp), or close it and run `installer` (an update),
+        which starts it again. Running downloads pause and carry on afterwards."""
         running = [t.id for t in self.manager.tasks if t.status in (*Status.ACTIVE, Status.QUEUED)]
-        if running and QMessageBox.question(
+        if running and not installer and QMessageBox.question(
                 self, APP_NAME, f"{len(running)} download{'s' * (len(running) > 1)} will pause for a moment "
                 "and continue after the restart. Restart now?") != QMessageBox.StandardButton.Yes:
             return
@@ -2860,8 +3036,64 @@ class MainWindow(QMainWindow):
         self.manager.shutdown()
         self.queues.save()
         self.settings.sync()
-        ipc.launch_gui()
+        if installer:
+            log.info("Updating PyDM with %s", installer)
+            app_update.run_installer(installer)
+        else:
+            ipc.launch_gui()
         self.quit_app()
+
+    # --- PyDM updates ---
+
+    def check_app_update(self, auto: bool = False, max_age: float = 20 * 3600, on_done=None):
+        """Ask GitHub whether a newer PyDM was released (in the background).
+        Automatic checks happen at most every `max_age` seconds and only if enabled."""
+        if on_done:
+            self._app_listeners.append(on_done)
+        if self._app_busy:
+            return
+        if auto:
+            if in_test_mode():
+                return  # tests never reach out to GitHub on their own
+            last = float(self.settings.value("app_last_check", 0))
+            if not self.settings.value("check_app_updates", True, type=bool) or time.time() - last < max_age:
+                return
+        self._app_busy = True
+        self.settings.setValue("app_last_check", time.time())
+
+        def work():
+            app_update.cleanup()
+            try:
+                self._app_results.append(("found", app_update.check()))
+            except Exception as e:  # noqa: BLE001 - offline, GitHub down, rate limited...
+                self._app_results.append(("error", str(e) or e.__class__.__name__))
+        threading.Thread(target=work, daemon=True, name="app-update").start()
+
+    def _app_update_done(self, result):
+        kind, detail = result
+        log.info("PyDM update check: %s %s", kind, detail.get("version") if kind == "found" else detail)
+        self._app_busy = False
+        self._app_last = result
+        if kind == "found" and detail["newer"]:
+            new = not self._app_release or self._app_release["version"] != detail["version"]
+            self._app_release = detail
+            self.app_update_button.setText(f"PyDM {detail['version']} available · Update")
+            self.app_update_button.setVisible(True)
+            if new and self.tray and self.settings.value("app_update_shown") != detail["version"]:
+                self.settings.setValue("app_update_shown", detail["version"])
+                self.tray.showMessage("PyDM update available", f"Version {detail['version']} is out. Click "
+                                      "\"Update\" at the bottom of the PyDM window to install it.",
+                                      theme.app_icon(), 8000)
+        listeners, self._app_listeners = self._app_listeners, []
+        for f in listeners:
+            try:
+                f(result)
+            except RuntimeError:
+                pass  # its dialog was closed meanwhile
+
+    def update_app(self, parent=None):
+        if self._app_release:
+            AppUpdateDialog(self, self._app_release, parent or self).exec()
 
     def _resume_after_restart(self):
         ids = self.settings.value("resume_after_restart", [])

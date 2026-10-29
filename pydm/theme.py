@@ -85,6 +85,8 @@ QPushButton[danger="true"] {{ background: {danger}; color: #ffffff; border: 1px 
 QPushButton[danger="true"]:hover {{ background: {danger}; border-color: {text}; }}
 QPushButton[flat="true"] {{ border: none; background: transparent; color: {accent}; padding: 4px 6px; }}
 QPushButton[flat="true"]:hover {{ text-decoration: underline; }}
+QProgressBar {{ background: {border}; border: none; border-radius: 3px; max-height: 6px; }}
+QProgressBar::chunk {{ background: {accent}; border-radius: 3px; }}
 
 QLineEdit, QComboBox {{ background: {surface}; color: {text}; border: 1px solid {border};
                                   border-radius: 6px; padding: 5px 8px; selection-background-color: {accent}; }}

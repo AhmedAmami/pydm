@@ -1,3 +1,8 @@
+## PyDM 1.2.0
+
+- **PyDM updates itself.** When a new version is out, an **Update** button appears at the bottom of the window. Click it and then **Update now**: PyDM downloads the new installer from GitHub, checks it against the checksum GitHub publishes, installs it and opens again. Downloads that were running pause and carry on afterwards. You can also check by hand under *Settings → About*.
+- After this version, there's no need to download installers from GitHub by hand.
+
 ## PyDM 1.1.1
 
 - **Smoother scrolling on fast monitors.** The list now scrolls at your screen's refresh rate (120, 144, 165 Hz…) instead of about 60 frames per second, and quick wheel spins flow into each other.
@@ -21,7 +26,7 @@ PyDM is a free download manager for Windows. It downloads files faster by using 
 
 ### Install
 
-1. Download **PyDM-Setup-1.1.1.exe** below, under *Assets*.
+1. Download **PyDM-Setup-1.2.0.exe** below, under *Assets*.
 2. Run it. Windows may show **"Windows protected your PC"** because the installer isn't signed. Click **More info**, then **Run anyway**.
 3. Click through the setup. It installs only for you, so it doesn't need an administrator.
 

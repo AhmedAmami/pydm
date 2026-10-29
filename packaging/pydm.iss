@@ -1,11 +1,11 @@
-﻿; Inno Setup script for PyDM. Built by build_installer.bat; expects the
+; Inno Setup script for PyDM. Built by build_installer.bat; expects the
 ; PyInstaller output in build\dist\PyDM.
 ;
 ; Installs per user (no admin prompt) into %LOCALAPPDATA%\Programs\PyDM and
 ; registers the browser connector under HKCU, like the app does from source.
 
 #ifndef AppVersion
-  #define AppVersion "1.1.1"
+  #define AppVersion "1.2.0"
 #endif
 
 [Setup]
@@ -56,6 +56,8 @@ Name: "{userstartup}\PyDM"; Filename: "{app}\PyDM.exe"; Parameters: "--minimized
 [Run]
 Filename: "{app}\PyDM.exe"; Parameters: "--install-browser"; StatusMsg: "Connecting PyDM to your browsers..."; Flags: runhidden waituntilterminated
 Filename: "{app}\PyDM.exe"; Description: "Start PyDM now"; Flags: nowait postinstall skipifsilent
+; in-app updates (pydm/app_update.py) run setup silently with /RELAUNCH=1
+Filename: "{app}\PyDM.exe"; Flags: nowait; Check: Relaunch
 Filename: "{app}\browser_extension"; Description: "Open the browser extension folder (to add PyDM to Brave, Chrome or Edge)"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallRun]
@@ -64,3 +66,9 @@ Filename: "{app}\PyDM.exe"; Parameters: "--uninstall-browser"; Flags: runhidden 
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\PyDM\native_host"
+
+[Code]
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;
