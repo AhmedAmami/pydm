@@ -186,6 +186,47 @@ if SHOT:
     win.refresh()
     win.grab().save(f"{SHOT}-window.png")
 
+# --- smooth scrolling ---
+from PyQt6.QtCore import QPointF  # noqa: E402
+from PyQt6.QtGui import QWheelEvent  # noqa: E402
+
+for i in range(30):
+    win.manager.add(f"{base}/ranges/x?n={i}", out, 2, filename=f"filler-{i:02d}.bin", start=False)
+win.refresh()
+pump(0.3)  # let the table lay out the new rows (the scroll range)
+bar = win.table.verticalScrollBar()
+bar.setValue(0)
+row_h = win.table.verticalHeader().defaultSectionSize()
+
+
+def wheel(angle=0, pixels=0):
+    pos = QPointF(200, 100)
+    ev = QWheelEvent(pos, win.table.viewport().mapToGlobal(pos), QPoint(0, pixels), QPoint(0, angle),
+                     Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(win.table.viewport(), ev)
+
+
+lines = QApplication.wheelScrollLines()
+wheel(angle=-120)
+seen = []
+t0 = time.time()
+while time.time() - t0 < 0.5:  # watch the glide
+    app.processEvents()
+    seen.append(bar.value())
+    time.sleep(0.005)
+end = round(row_h * lines / 3)
+check("one wheel notch glides about one row (not three)", any(0 < v < end for v in seen)
+      and abs(bar.value() - end) <= 1, f"passed through {sorted(set(seen))[:6]}... -> {bar.value()}, row {row_h}")
+start = bar.value()
+wheel(angle=-120)
+wheel(angle=-120)
+pump(0.5)
+check("quick notches add up", abs(bar.value() - start - 2 * round(row_h * lines / 3)) <= 2, f"{start} -> {bar.value()}")
+start = bar.value()
+wheel(angle=-15, pixels=-25)  # a touchpad: small pixel steps
+pump(0.05)
+check("touchpads scroll by their own pixels, straight away", bar.value() - start == 25, f"{start} -> {bar.value()}")
+
 # --- compact view, remembered ---
 win.act_view.trigger()
 check("switching to compact shows the columns and hides the buttons", not win.comfortable

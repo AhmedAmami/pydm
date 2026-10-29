@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QPointF, QRect, QRectF, QTime, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
+from PyQt6.QtCore import QCoreApplication, QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QTime, QVariantAnimation, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QAction, QColor, QDesktopServices, QGuiApplication, QIcon, QFont, QFontMetrics, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
 )
@@ -219,6 +219,54 @@ def style_title_bar(widget) -> None:
         set_attr(34, colorref(theme.colors["border"]))      # DWMWA_BORDER_COLOR
     except Exception:  # noqa: BLE001 - older Windows: default title bar
         pass
+
+
+class SmoothScroller(QObject):
+    """Mouse-wheel scrolling that glides: each notch moves about one row (scaled by
+    Windows' "lines to scroll" setting) with a short eased animation, and quick
+    wheel spins add up instead of jumping. Touchpads send pixel deltas and already
+    scroll smoothly, so those pass straight through."""
+
+    DURATION = 220  # ms per glide
+
+    def __init__(self, view, step=None):
+        super().__init__(view)
+        self.view = view
+        self.bar = view.verticalScrollBar()
+        self.step = step or (lambda: 40)
+        self.target = None
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(self.DURATION)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.valueChanged.connect(lambda v: self.bar.setValue(int(v)))
+        self.anim.finished.connect(self._done)
+        view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        view.viewport().installEventFilter(self)
+
+    def _done(self):
+        self.target = None
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.Type.Wheel or event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            return False
+        pixels = event.pixelDelta().y()
+        notches = event.angleDelta().y() / 120
+        if pixels and not event.angleDelta().y() % 120 == 0:  # touchpad: already smooth
+            self.anim.stop()
+            self.target = None
+            self.bar.setValue(self.bar.value() - pixels)
+            return True
+        if not notches:
+            return False
+        lines = max(1, QApplication.wheelScrollLines())
+        distance = notches * self.step() * lines / 3  # Windows default (3 lines) -> one row per notch
+        start = self.target if self.target is not None else self.bar.value()
+        self.target = max(self.bar.minimum(), min(self.bar.maximum(), round(start - distance)))
+        self.anim.stop()
+        self.anim.setStartValue(self.bar.value())
+        self.anim.setEndValue(self.target)
+        self.anim.start()
+        return True
 
 
 class TitleBarStyler(QObject):
@@ -1804,6 +1852,7 @@ class MainWindow(QMainWindow):
         self._sync_queue_items()
         self.sidebar.setCurrentRow(0)
         self.sidebar.currentItemChanged.connect(self._category_changed)
+        self.sidebar_scroller = SmoothScroller(self.sidebar, lambda: 36)
         self.sidebar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sidebar.customContextMenuRequested.connect(self._sidebar_menu)
 
@@ -1830,6 +1879,7 @@ class MainWindow(QMainWindow):
         self.table.setItemDelegateForColumn(COL_NAME, NameDelegate(self))
         self.table.setItemDelegateForColumn(COL_STATUS, StatusPillDelegate(self.table))
         self.table.setItemDelegateForColumn(COL_ACTIONS, ActionsDelegate(self))
+        self.scroller = SmoothScroller(self.table, lambda: self.table.verticalHeader().defaultSectionSize())
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.itemSelectionChanged.connect(self.refresh)
