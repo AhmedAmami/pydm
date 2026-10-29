@@ -6,4 +6,4 @@ updates.activate()  # a newer downloaded yt-dlp, if any; must run before anythin
 from .engine import DownloadManager, DownloadTask, Status  # noqa: E402
 
 __all__ = ["DownloadManager", "DownloadTask", "Status"]
-__version__ = "1.0.0"
+__version__ = "1.1.0"

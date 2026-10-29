@@ -206,11 +206,25 @@ def _clean(e: Exception) -> str:
     return msg or e.__class__.__name__
 
 
+_meta: dict[str, dict] = {}  # url -> title, thumbnail, duration, uploader (from the last quality check)
+
+
+def meta(url: str) -> dict:
+    """What the Add dialog shows above the qualities: title, thumbnail, length, uploader."""
+    return _meta.get(url, {})
+
+
+def _remember(url: str, info: dict) -> None:
+    _meta[url] = {k: info.get(k) for k in ("title", "thumbnail", "duration", "uploader", "channel")}
+
+
 def list_variants(url: str, headers: dict | None = None) -> tuple[str, list[Variant]]:
     """Qualities by resolution, best first, plus audio only if the site has a
     separate audio track. A post with several videos lists them instead."""
     info = _extract(url, headers or {})
     entries = _entries(info)
+    first = entries[0] if entries and isinstance(entries[0], dict) else {}
+    _remember(url, {**first, **{k: v for k, v in info.items() if v}} if entries else info)
     if entries is not None:
         if len(entries) > 1:
             return "ytdl", [Variant(f"item:{i}", f"Video {i} of {len(entries)}" + (
@@ -255,6 +269,7 @@ class YtdlTask(StreamTask):
                  kind="ytdl", variant=None):
         super().__init__(url, dest_dir, connections, filename, headers, task_id, "ytdl", variant)
         self._named = bool(filename)   # otherwise the stem comes from the video title
+        self.thumbnail: str | None = meta(url).get("thumbnail")
         if not filename:
             self.stem = f"{site_for(url) or 'Online'} video"  # until the real title is known
         self._progress: dict[str, list] = {}   # format id -> [downloaded, total]
@@ -289,15 +304,17 @@ class YtdlTask(StreamTask):
             "supports_ranges": True, "segments": segs,
             "active_connections": sum(1 for s in segs if s[3]),
             "info": " · ".join(x for x in (site_for(self.url) or "Video", self.quality) if x),
+            "thumbnail": self.thumbnail,
         }
 
     def to_dict(self) -> dict:
-        return {**super().to_dict(), "named": self._named}
+        return {**super().to_dict(), "named": self._named, "thumbnail": self.thumbnail}
 
     @classmethod
     def from_dict(cls, d: dict) -> "YtdlTask":
         t = super().from_dict(d)
         t._named = d.get("named", True)
+        t.thumbnail = d.get("thumbnail")
         return t
 
     def set_url(self, url: str, headers: dict | None = None) -> bool:
@@ -350,6 +367,9 @@ class YtdlTask(StreamTask):
                     ydl.params["playlist_items"] = str(item)
                     ydl.params["noplaylist"] = False
                 _check(info)
+                if not self.thumbnail:
+                    self.thumbnail = info.get("thumbnail") or next(
+                        (t.get("url") for t in reversed(info.get("thumbnails") or []) if t.get("url")), None)
                 if not self._named:
                     title = info.get("title") or info.get("id") or "video"
                     if entries is not None and len(entries) > 1:

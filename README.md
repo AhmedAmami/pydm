@@ -2,9 +2,15 @@
 
 A segmented, resumable download manager for Windows, written in Python with a PyQt6 GUI. It also downloads HLS and DASH streaming video, and videos from YouTube, Facebook, Instagram and ~1,750 other sites through yt-dlp.
 
+![PyDM in the light theme](docs/screenshots/window-light.png)
+
+| Dark theme | Adding a video |
+|---|---|
+| ![PyDM in the dark theme](docs/screenshots/window-dark.png) | ![The Add dialog with a video preview](docs/screenshots/add-video.png) |
+
 ## Install
 
-**[Download PyDM-Setup-1.0.0.exe](https://github.com/AhmedAmami/pydm/releases/latest)** from the [Releases](https://github.com/AhmedAmami/pydm/releases) page and run it. A step-by-step guide for non-technical users is in [RELEASE_NOTES.md](RELEASE_NOTES.md). The installer is unsigned, so Windows SmartScreen asks once (More info → Run anyway). It installs for your user only, so there's no admin prompt, into `%LOCALAPPDATA%\Programs\PyDM`. It adds Start menu and desktop shortcuts, and can optionally start PyDM with Windows. Python isn't needed: ffmpeg, yt-dlp and Deno are bundled.
+**[Download the latest PyDM-Setup.exe](https://github.com/AhmedAmami/pydm/releases/latest)** from the [Releases](https://github.com/AhmedAmami/pydm/releases) page and run it. A step-by-step guide for non-technical users is in [RELEASE_NOTES.md](RELEASE_NOTES.md). The installer is unsigned, so Windows SmartScreen asks once (More info → Run anyway). It installs for your user only, so there's no admin prompt, into `%LOCALAPPDATA%\Programs\PyDM`. It adds Start menu and desktop shortcuts, and can optionally start PyDM with Windows. Python isn't needed: ffmpeg, yt-dlp and Deno are bundled.
 
 The installer connects PyDM to Brave, Chrome and Edge. To add the extension, open **Settings → Browser** in PyDM, which shows the steps and the extension folder (`%LOCALAPPDATA%\Programs\PyDM\browser_extension`). Uninstall from Windows Settings → Apps.
 

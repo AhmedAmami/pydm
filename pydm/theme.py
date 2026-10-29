@@ -90,7 +90,7 @@ QLineEdit, QComboBox {{ background: {surface}; color: {text}; border: 1px solid 
                                   border-radius: 6px; padding: 5px 8px; selection-background-color: {accent}; }}
 QLineEdit:focus, QComboBox:focus {{ border: 1px solid {accent}; }}
 QLineEdit:disabled, QComboBox:disabled {{ color: {muted}; background: {bg}; }}
-QLineEdit#search {{ border-radius: 15px; padding-left: 10px; min-width: 220px; }}
+QLineEdit#search {{ border-radius: 15px; padding-left: 10px; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{ background: {surface}; border: 1px solid {border}; selection-background-color: {selection};
                                selection-color: {text}; outline: none; }}
@@ -120,6 +120,8 @@ QToolButton#dayButton:checked:disabled {{ background: {track}; color: {muted}; }
 QLabel[muted="true"] {{ color: {muted}; }}
 QLabel#error {{ color: {danger}; }}
 #emptyTitle {{ font-size: 14pt; font-weight: 600; }}
+#previewTitle {{ font-size: 11pt; font-weight: 600; }}
+QLabel#thumb {{ background: {track}; border-radius: 8px; }}
 #dialogTitle {{ font-size: 13pt; font-weight: 600; }}
 QFrame#card {{ background: {surface}; border: 1px solid {border}; border-radius: 8px; }}
 
@@ -192,6 +194,10 @@ PATHS = {
                 '"/><path d="M8 14h2M14 14h2M8 17.5h2"/>',
     "up": '<path d="m6 15 6-6 6 6"/>',
     "down": '<path d="m6 9 6 6 6-6"/>',
+    "more": '<circle cx="5" cy="12" r="1.6" fill="{color}"/><circle cx="12" cy="12" r="1.6" fill="{color}"/>'
+            '<circle cx="19" cy="12" r="1.6" fill="{color}"/>',
+    "columns": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 14.5h18M9 9.5v10.5"/>',
+    "rows": '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/>',
     "gauge": '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
     "theme": '<circle cx="12" cy="12" r="9.5"/><path d="M12 2.5a9.5 9.5 0 0 0 0 19z" fill="{color}"/>',
 }

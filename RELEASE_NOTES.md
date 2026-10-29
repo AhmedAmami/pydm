@@ -1,10 +1,21 @@
-## PyDM 1.0.0
+## PyDM 1.1.0
+
+### What's new
+- **A cleaner download list.** Each download has two lines: the name, then its progress, speed and time left, or its size, site and date once finished. Each one also has a coloured status label and a slim progress bar.
+- **Buttons on the row under the mouse:** pause or resume, open, show in folder, and more.
+- **Video thumbnails.** YouTube and other videos show their thumbnail in the list. The Add window shows a preview with the title, length and channel before you pick the quality.
+- **The title bar matches the app**, including in dark mode, on Windows 11.
+- **Clearer errors.** For example, "Not found on the server (404)" or "Access denied: the link may have expired (403)".
+- **Compact view.** Prefer the old columns? Use the view button next to Settings.
+
+If you already have PyDM, just run the new installer: your downloads and settings stay.
+
 
 PyDM is a free download manager for Windows. It downloads files faster by using several connections at once, and it can pause and resume them, even after a restart. It also saves videos from YouTube, Facebook, Instagram, X, TikTok, Vimeo and many other sites.
 
 ### Install
 
-1. Download **PyDM-Setup-1.0.0.exe** below, under *Assets*.
+1. Download **PyDM-Setup-1.1.0.exe** below, under *Assets*.
 2. Run it. Windows may show **"Windows protected your PC"** because the installer isn't signed. Click **More info**, then **Run anyway**.
 3. Click through the setup. It installs only for you, so it doesn't need an administrator.
 

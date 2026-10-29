@@ -12,15 +12,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, QRectF, QTime, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QPointF, QRect, QRectF, QTime, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
-    QAction, QColor, QDesktopServices, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut,
+    QAction, QColor, QDesktopServices, QGuiApplication, QIcon, QFont, QFontMetrics, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QSystemTrayIcon,
-    QTableWidget, QTableWidgetItem, QTabWidget, QTimeEdit, QToolButton, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTabWidget, QTimeEdit, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from PyQt6.QtNetwork import QLocalServer
@@ -33,8 +33,10 @@ from .queues import AFTER_ACTIONS, DAY_NAMES, MAIN_QUEUE, QueueManager, power_ac
 from .format import human_size, human_time
 
 APP_NAME = "PyDM"
-COLUMNS = ["", "File name", "Size", "Progress", "Speed", "Time left", "Status", "Added"]
-COL_CHECK, COL_NAME, COL_SIZE, COL_PROGRESS, COL_SPEED, COL_ETA, COL_STATUS, COL_ADDED = range(len(COLUMNS))
+COLUMNS = ["", "File name", "Size", "Progress", "Speed", "Time left", "Status", "Added", ""]
+COL_CHECK, COL_NAME, COL_SIZE, COL_PROGRESS, COL_SPEED, COL_ETA, COL_STATUS, COL_ADDED, COL_ACTIONS = range(len(COLUMNS))
+# The "comfortable" view folds size/progress/speed/time/added into the name cell's second line.
+COMPACT_ONLY = (COL_SIZE, COL_PROGRESS, COL_SPEED, COL_ETA, COL_ADDED)
 VIDEO_KINDS = ("hls", "dash", "ytdl")
 STATUS_COLOR_KEYS = {
     "Threat found": "danger",
@@ -49,6 +51,7 @@ CATEGORIES = [
     *[(key, label, key) for key, (label, _, _) in theme.TYPES.items()],
 ]
 DATA = Qt.ItemDataRole.UserRole
+ROW = Qt.ItemDataRole.UserRole + 2      # what the comfortable view draws in the name cell
 HEADER = Qt.ItemDataRole.UserRole + 1   # sidebar section headings ("types", "queues")
 # Copied links with these extensions (or video pages) open the Add dialog.
 CAPTURE_EXTENSIONS = {
@@ -128,6 +131,105 @@ def force_foreground(widget) -> None:
         log.warning("Couldn't bring the window to the front: %s", e)
 
 
+class Thumbnails:
+    """Video thumbnails for the list and the Add dialog: downloaded in the
+    background, kept on disk (%LOCALAPPDATA%\\PyDM\\thumbs) and handed out as
+    square-cropped pixmaps once ready. Only touched from the GUI thread, except
+    the download itself."""
+
+    SIZE = 96  # pixels; drawn at 40 (list) or larger in the dialog
+
+    def __init__(self):
+        import hashlib
+        self._hash = lambda url: hashlib.sha1(url.encode()).hexdigest()[:20]
+        self.folder = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "PyDM" / "thumbs"
+        self._pixmaps: dict[str, QPixmap | None] = {}
+        self._wide: dict[str, QPixmap] = {}
+        self._done: list = []
+        self._busy: set[str] = set()
+        self.on_ready = None
+
+    def _load(self, url: str, data: bytes) -> None:
+        img = QImage()
+        if not data or not img.loadFromData(data):
+            self._pixmaps[url] = None
+            return
+        self._wide[url] = QPixmap.fromImage(img)
+        side = min(img.width(), img.height())
+        square = img.copy((img.width() - side) // 2, (img.height() - side) // 2, side, side)
+        self._pixmaps[url] = QPixmap.fromImage(square.scaled(
+            self.SIZE, self.SIZE, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def get(self, url: str | None, wide: bool = False) -> QPixmap | None:
+        """The thumbnail if it's ready; otherwise starts fetching it and returns None."""
+        if not url:
+            return None
+        while self._done:
+            u, data = self._done.pop(0)
+            self._busy.discard(u)
+            self._load(u, data)
+        if url in self._pixmaps:
+            return self._wide.get(url) if wide else self._pixmaps[url]
+        cached = self.folder / f"{self._hash(url)}.img"
+        if cached.exists():
+            self._load(url, cached.read_bytes())
+            return self._wide.get(url) if wide else self._pixmaps.get(url)
+        if url not in self._busy:
+            self._busy.add(url)
+            threading.Thread(target=self._fetch, args=(url, cached), daemon=True, name="thumbnail").start()
+        return None
+
+    def _fetch(self, url: str, cached: Path) -> None:
+        data = b""
+        try:
+            import requests
+            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if r.ok and len(r.content) < 5_000_000:
+                data = r.content
+                self.folder.mkdir(parents=True, exist_ok=True)
+                cached.write_bytes(data)
+        except Exception:  # noqa: BLE001 - no thumbnail is fine
+            pass
+        self._done.append((url, data))
+
+
+def style_title_bar(widget) -> None:
+    """Windows 11: title bar in the app's colours (dark in dark mode) and rounded
+    corners, so the window looks native in both themes."""
+    if sys.platform != "win32" or not widget.isWindow():
+        return
+    try:
+        import ctypes
+        dwm = ctypes.windll.dwmapi
+        hwnd = ctypes.c_void_p(int(widget.winId()))
+
+        def set_attr(attr: int, value: int) -> None:
+            v = ctypes.c_int(value)
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+
+        def colorref(hex_color: str) -> int:
+            c = QColor(hex_color)
+            return c.red() | (c.green() << 8) | (c.blue() << 16)
+
+        dark = theme.colors["bg"] == theme.DARK["bg"]
+        set_attr(20, 1 if dark else 0)                      # DWMWA_USE_IMMERSIVE_DARK_MODE
+        set_attr(33, 2)                                     # DWMWA_WINDOW_CORNER_PREFERENCE: round
+        set_attr(35, colorref(theme.colors["surface"]))     # DWMWA_CAPTION_COLOR (Windows 11)
+        set_attr(36, colorref(theme.colors["text"]))        # DWMWA_TEXT_COLOR
+        set_attr(34, colorref(theme.colors["border"]))      # DWMWA_BORDER_COLOR
+    except Exception:  # noqa: BLE001 - older Windows: default title bar
+        pass
+
+
+class TitleBarStyler(QObject):
+    """Styles every window's title bar when it first shows (dialogs, message boxes...)."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow():
+            style_title_bar(obj)
+        return False
+
+
 def looks_like_url(text: str) -> bool:
     return text.strip().lower().startswith(("http://", "https://"))
 
@@ -141,6 +243,21 @@ def reveal_in_explorer(path: str) -> None:
 
 def status_color(status: str) -> QColor:
     return QColor(theme.colors[STATUS_COLOR_KEYS.get(status, "muted")])
+
+
+HTTP_REASONS = {401: "Needs a login", 403: "Access denied: the link may have expired", 404: "Not found on the server",
+                410: "No longer available: the link expired", 429: "Too many requests; try again later",
+                500: "The server had an error", 502: "The server had an error", 503: "The server is busy"}
+
+
+def friendly_error(error: str | None) -> str:
+    """One readable line: "404 Client Error: Not Found for url: http://…" -> "Not found on the server (404)"."""
+    text = (error or "Failed").strip().splitlines()[0]
+    m = re.search(r"\b(\d{3}) (?:Client|Server) Error", text)
+    if m:
+        code = int(m.group(1))
+        return f"{HTTP_REASONS.get(code, 'The server refused the download')} ({code})"
+    return re.sub(r"^\w+(Error|Exception): ", "", text)
 
 
 def friendly_date(ts: float) -> str:
@@ -277,6 +394,138 @@ class CheckHeader(QHeaderView):
         if index == COL_CHECK and self.table.rowCount():
             selected = len(self.table.selectionModel().selectedRows())
             draw_checkbox(p, rect, 2 if selected == self.table.rowCount() else 1 if selected else 0)
+
+
+def _draw_background(delegate, p: QPainter, option, index) -> None:
+    opt = QStyleOptionViewItem(option)
+    delegate.initStyleOption(opt, index)
+    opt.text, opt.icon = "", QIcon()
+    style = opt.widget.style() if opt.widget else QApplication.style()
+    style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, p, opt.widget)
+
+
+class NameDelegate(QStyledItemDelegate):
+    """Comfortable view: thumbnail or file-type badge, the name in bold, a muted
+    second line (size, speed, time left / where and when) and a slim progress bar."""
+
+    def __init__(self, window):
+        super().__init__(window.table)
+        self.window_ = window
+
+    def paint(self, p: QPainter, option, index):
+        d = index.data(ROW)
+        if not d or not self.window_.comfortable:
+            return super().paint(p, option, index)
+        _draw_background(self, p, option, index)
+        c = theme.colors
+        r = QRectF(option.rect)
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        thumb = QRectF(r.left() + 6, r.center().y() - 20, 40, 40)
+        pix = self.window_.thumbs.get(d.get("thumbnail"))
+        if pix is not None:
+            path = QPainterPath()
+            path.addRoundedRect(thumb, 7, 7)
+            p.setClipPath(path)
+            p.drawPixmap(thumb.toRect(), pix)
+            p.setClipping(False)
+        else:
+            p.drawPixmap(thumb.toRect(), theme.type_badge(d["type"]).pixmap(40, 40))
+        x = thumb.right() + 12
+        width = max(40.0, r.right() - 10 - x)
+        title_font = QFont(option.font)
+        title_font.setBold(True)
+        p.setFont(title_font)
+        p.setPen(QColor(c["text"]))
+        fm = QFontMetrics(title_font)
+        p.drawText(QRectF(x, r.top() + 9, width, 20), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(d["title"], Qt.TextElideMode.ElideMiddle, int(width)))
+        small = QFont(option.font)
+        small.setPointSizeF(max(7.5, option.font.pointSizeF() - 0.8))
+        p.setFont(small)
+        p.setPen(QColor(c["danger"] if d.get("alert") else c["muted"]))
+        p.drawText(QRectF(x, r.top() + 29, width, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   QFontMetrics(small).elidedText(d["subtitle"], Qt.TextElideMode.ElideRight, int(width)))
+        if d.get("bar"):
+            progress, status = d["bar"]
+            bar = QRectF(x, r.bottom() - 9, min(width, 440.0), 4)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(c["track"]))
+            p.drawRoundedRect(bar, 2, 2)
+            p.setBrush(status_color(status))
+            if progress is None:  # size unknown / merging: a block sliding along
+                phase = (time.monotonic() * 0.7) % 1.0
+                chunk = bar.width() * 0.25
+                p.setClipRect(bar)
+                p.drawRoundedRect(QRectF(bar.left() - chunk + phase * (bar.width() + chunk), bar.top(), chunk,
+                                         bar.height()), 2, 2)
+            elif progress > 0:
+                p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(4.0, bar.width() * progress), bar.height()), 2, 2)
+        p.restore()
+
+
+class StatusPillDelegate(QStyledItemDelegate):
+    """The status as a small coloured pill."""
+
+    def paint(self, p: QPainter, option, index):
+        _draw_background(self, p, option, index)
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        if not text:
+            return
+        color = status_color(text)
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont(option.font)
+        font.setPointSizeF(max(7.5, option.font.pointSizeF() - 0.8))
+        font.setBold(True)
+        p.setFont(font)
+        w = QFontMetrics(font).horizontalAdvance(text) + 22
+        pill = QRectF(option.rect.left() + 6, option.rect.center().y() - 11, min(w, option.rect.width() - 10), 22)
+        tint = QColor(color)
+        tint.setAlpha(55 if theme.colors["bg"] == theme.DARK["bg"] else 30)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(tint)
+        p.drawRoundedRect(pill, 11, 11)
+        p.setPen(color)
+        p.drawText(pill, Qt.AlignmentFlag.AlignCenter, text)
+        p.restore()
+
+
+class ActionsDelegate(QStyledItemDelegate):
+    """Round buttons on the row under the mouse (and selected rows): pause/resume,
+    open, show in folder, more."""
+
+    SIZE, GAP = 30, 6
+
+    def __init__(self, window):
+        super().__init__(window.table)
+        self.window_ = window
+
+    @classmethod
+    def rects(cls, cell: QRect, count: int) -> list[QRectF]:
+        out, right = [], cell.right() - 10
+        for i in range(count):
+            x = right - (count - i) * (cls.SIZE + cls.GAP) + cls.GAP
+            out.append(QRectF(x, cell.center().y() - cls.SIZE / 2, cls.SIZE, cls.SIZE))
+        return out
+
+    def paint(self, p: QPainter, option, index):
+        _draw_background(self, p, option, index)
+        w = self.window_
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        if index.row() != w._hover_row and not selected:
+            return
+        actions = w.row_actions(index.row())
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for (key, icon_name, _tip), rect in zip(actions, self.rects(option.rect, len(actions))):
+            hot = w._hover_pos is not None and rect.contains(QPointF(w._hover_pos))
+            p.setPen(QPen(QColor(theme.colors["border"]), 1))
+            p.setBrush(QColor(theme.colors["hover"] if hot else theme.colors["surface"]))
+            p.drawEllipse(rect)
+            icon = theme.icon(icon_name, theme.colors["accent"] if hot else theme.colors["text"])
+            p.drawPixmap(rect.adjusted(7, 7, -7, -7).toRect(), icon.pixmap(16, 16))
+        p.restore()
 
 
 class ProgressDelegate(QStyledItemDelegate):
@@ -454,6 +703,7 @@ class AddDownloadDialog(QDialog):
         layout.setContentsMargins(20, 18, 20, 16)
         layout.setSpacing(12)
         layout.addWidget(dialog_header("Add download", source or "Files, videos and YouTube links"))
+        layout.addWidget(self._build_preview())
         layout.addWidget(card)
         layout.addLayout(bottom)
 
@@ -479,6 +729,80 @@ class AddDownloadDialog(QDialog):
         # Usually opened because the browser sent a download: come to the front of it.
         QTimer.singleShot(0, lambda: (self.raise_(), self.activateWindow(), force_foreground(self)))
 
+    # --- video preview (thumbnail, title, length) ---
+
+    def _build_preview(self) -> QWidget:
+        self._thumbs = getattr(self.parent(), "thumbs", None) or Thumbnails()
+        self.preview = QFrame()
+        self.preview.setObjectName("card")
+        row = QHBoxLayout(self.preview)
+        row.setContentsMargins(12, 12, 12, 12)
+        row.setSpacing(14)
+        self.preview_image = QLabel()
+        self.preview_image.setFixedSize(160, 90)
+        self.preview_image.setObjectName("thumb")
+        self.preview_title = QLabel()
+        self.preview_title.setObjectName("previewTitle")
+        self.preview_title.setWordWrap(True)
+        self.preview_meta = QLabel()
+        self.preview_meta.setProperty("muted", True)
+        texts = QVBoxLayout()
+        texts.setSpacing(4)
+        texts.addWidget(self.preview_title)
+        texts.addWidget(self.preview_meta)
+        texts.addStretch()
+        row.addWidget(self.preview_image)
+        row.addLayout(texts, 1)
+        self.preview.setVisible(False)
+        self._thumb_url = None
+        self._thumb_timer = QTimer(self)
+        self._thumb_timer.timeout.connect(self._show_thumbnail)
+        return self.preview
+
+    def _show_preview(self, url: str):
+        m = ytdl.meta(url) if self.kind == "ytdl" else {}
+        if not m.get("title"):
+            self.preview.setVisible(False)
+            return
+        self.preview_title.setText(m["title"])
+        duration = m.get("duration")
+        length = ""
+        if duration:
+            h, rest = divmod(int(duration), 3600)
+            length = f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
+        who = m.get("channel") or m.get("uploader") or ""
+        self.preview_meta.setText("  ·  ".join(x for x in (ytdl.site_for(url) or "", length, who) if x))
+        self.preview_image.setPixmap(theme.type_badge("video").pixmap(90, 90))
+        self.preview_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setVisible(True)
+        self._thumb_url, self._thumb_tries = m.get("thumbnail"), 0
+        if self._thumb_url:
+            self._thumb_timer.start(150)
+        self.adjustSize()
+
+    def _show_thumbnail(self):
+        self._thumb_tries += 1
+        pix = self._thumbs.get(self._thumb_url, wide=True)
+        if pix is None and self._thumb_tries < 100:
+            return
+        self._thumb_timer.stop()
+        if pix is None:
+            return
+        # Crop to 16:9 and round the corners.
+        scaled = pix.scaled(160, 90, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation)
+        crop = scaled.copy((scaled.width() - 160) // 2, (scaled.height() - 90) // 2, 160, 90)
+        rounded = QPixmap(160, 90)
+        rounded.fill(Qt.GlobalColor.transparent)
+        p = QPainter(rounded)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, 160, 90), 8, 8)
+        p.setClipPath(path)
+        p.drawPixmap(0, 0, crop)
+        p.end()
+        self.preview_image.setPixmap(rounded)
+
     def _toggle_advanced(self):
         shown = not self.advanced.isVisible()
         self.advanced.setVisible(shown)
@@ -496,9 +820,11 @@ class AddDownloadDialog(QDialog):
         for widget in (self.quality, self.stream_note):
             self.form.setRowVisible(widget, is_stream)
         if is_stream and url != self._probed_url:
+            self.preview.setVisible(False)
             self._start_probe(url)
         elif not is_stream:
             self._probed_url, self._probe_error = None, None
+            self.preview.setVisible(False)
         self._update_folder()
 
     def _start_probe(self, url: str):
@@ -540,6 +866,7 @@ class AddDownloadDialog(QDialog):
             name = (ytdl.site_for(self._probed_url) or "Online") if self.kind == "ytdl" else self.kind.upper()
             self.stream_note.setText(f"{name} video" + (f" · {n} qualities" if n > 1 else ""))
             self._update_folder()
+            self._show_preview(self._probed_url)
 
     def variant(self) -> str | None:
         return self.quality.currentData() if self.kind != "file" else None
@@ -1311,6 +1638,10 @@ class MainWindow(QMainWindow):
         self.power = power_action  # replaced in tests
         self._row_ids: list[str] = []
         self._category = "all"
+        self.thumbs = Thumbnails()
+        self.comfortable = self.settings.value("list_view", "comfortable") != "compact"
+        self._hover_row = -1
+        self._hover_pos = None
         self._last_status: dict[str, str] = {}   # for "finished" notifications
         self._notified_path: str | None = None
         self._quitting = False
@@ -1393,6 +1724,8 @@ class MainWindow(QMainWindow):
         self.act_quit = self._action("Quit PyDM", "x", self.quit_app, "Ctrl+Q")
         self.act_refresh = self._action("Refresh link…", "retry", lambda: self.refresh_link(), "Ctrl+L",
                                         "Give this download a fresh link when the old one stopped working")
+        self.act_view = self._action("Switch view", "columns", lambda: self.set_view(not self.comfortable),
+                                     "Ctrl+Shift+V", "Switch between the comfortable view and compact columns")
         self.act_scheduler = self._action("Scheduler", "calendar", lambda: self.open_scheduler(), "Ctrl+J",
                                           "Queues and scheduled downloads")
         self.act_move_up = self._action("Move up", "up", lambda: self.move_in_queue(-1), "Ctrl+Up")
@@ -1424,6 +1757,7 @@ class MainWindow(QMainWindow):
                 continue
             b = QToolButton()
             b.setDefaultAction(a)
+            b.setProperty("secondary", a in (self.act_resume_all, self.act_pause_all, self.act_scheduler))
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             b.setIconSize(QSize(18, 18))
             tb.addWidget(b)
@@ -1436,6 +1770,10 @@ class MainWindow(QMainWindow):
         self._search_action = self.search.addAction(theme.icon("search"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(lambda _: self.refresh())
         tb.addWidget(self.search)
+        self.view_button = QToolButton()
+        self.view_button.setDefaultAction(self.act_view)
+        self.view_button.setIconSize(QSize(18, 18))
+        tb.addWidget(self.view_button)
         settings_button = QToolButton()
         settings_button.setDefaultAction(self.act_settings)
         settings_button.setIconSize(QSize(18, 18))
@@ -1489,6 +1827,9 @@ class MainWindow(QMainWindow):
         self.table.setMouseTracking(True)
         self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.table.setItemDelegateForColumn(COL_PROGRESS, ProgressDelegate(self.table))
+        self.table.setItemDelegateForColumn(COL_NAME, NameDelegate(self))
+        self.table.setItemDelegateForColumn(COL_STATUS, StatusPillDelegate(self.table))
+        self.table.setItemDelegateForColumn(COL_ACTIONS, ActionsDelegate(self))
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.itemSelectionChanged.connect(self.refresh)
@@ -1503,9 +1844,12 @@ class MainWindow(QMainWindow):
         header.setToolTip("Tick rows to select several downloads; the box here selects all")
         header.sectionClicked.connect(self._header_clicked)
         for col, width in ((COL_SIZE, 85), (COL_PROGRESS, 170), (COL_SPEED, 90),
-                           (COL_ETA, 75), (COL_STATUS, 125), (COL_ADDED, 115)):
+                           (COL_ETA, 75), (COL_STATUS, 130), (COL_ADDED, 115)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(col, width)
+        header.setSectionResizeMode(COL_ACTIONS, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(COL_ACTIONS, 4 * (ActionsDelegate.SIZE + ActionsDelegate.GAP) + 14)
+        self.apply_view()
 
         # Shown instead of the table when there's nothing to list.
         self.empty = QWidget()
@@ -1729,6 +2073,8 @@ class MainWindow(QMainWindow):
                 item.setIcon(theme.icon(dict((c[0], c[2]) for c in CATEGORIES if c)[key], color))
             elif not key:
                 item.setForeground(QColor(theme.colors["muted"]))
+        if hasattr(self, "act_view"):
+            self.act_view.setIcon(theme.icon(self.act_view.data() or "columns"))
         self.btn_open.setIcon(theme.icon("open"))
         self.btn_refresh.setIcon(theme.icon("retry"))
         self.btn_folder.setIcon(theme.icon("folder"))
@@ -1741,6 +2087,7 @@ class MainWindow(QMainWindow):
     def apply_theme(self):
         theme.apply(QApplication.instance(), self.settings.value("theme", "system"))
         self.apply_icons()
+        style_title_bar(self)
         self.refresh()
 
     # --- refresh loop ---
@@ -1875,6 +2222,7 @@ class MainWindow(QMainWindow):
             name_item.setText(name)
             name_item.setIcon(theme.type_badge(theme.file_type(name, s["kind"])))
         name_item.setToolTip(f"{name}\n{s['url']}")
+        name_item.setData(ROW, self._row_data(s))
         size = human_size(s["total_size"]) if s["total_size"] else "?"
         self.table.item(row, COL_SIZE).setText(("~" + size) if s["size_estimated"] else size)
 
@@ -2154,6 +2502,107 @@ class MainWindow(QMainWindow):
             self.tray.showMessage("Queue continued", f"{names} was running when PyDM closed, so it continues.",
                                   theme.app_icon(), 5000)
         self.refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Narrow window: the less used toolbar buttons show only their icon (tooltips say what).
+        narrow = event.size().width() < 1120
+        for b in self._tool_buttons:
+            if b.property("secondary"):
+                b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if narrow
+                                     else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.search.setMinimumWidth(150 if narrow else 220)
+
+    # --- list views and row buttons ---
+
+    def set_view(self, comfortable: bool):
+        self.comfortable = comfortable
+        self.settings.setValue("list_view", "comfortable" if comfortable else "compact")
+        self.apply_view()
+
+    def apply_view(self):
+        """Comfortable: two-line rows with thumbnails, status pills and hover buttons.
+        Compact: one line per download with the classic columns."""
+        for col in COMPACT_ONLY:
+            self.table.setColumnHidden(col, self.comfortable)
+        self.table.setColumnHidden(COL_ACTIONS, not self.comfortable)  # compact: room for the columns
+        self.table.verticalHeader().setDefaultSectionSize(62 if self.comfortable else 40)
+        self.table.setIconSize(QSize(40, 40) if self.comfortable else QSize(28, 28))
+        self.act_view.setData("columns" if self.comfortable else "rows")
+        self.act_view.setIcon(theme.icon(self.act_view.data()))
+        self.act_view.setToolTip("Compact view (columns)" if self.comfortable else "Comfortable view")
+        self.table.viewport().update()
+
+    def row_actions(self, row: int) -> list[tuple[str, str, str]]:
+        task = self.manager.get(self._row_ids[row]) if 0 <= row < len(self._row_ids) else None
+        if task is None:
+            return []
+        if task.status in (*Status.ACTIVE, Status.QUEUED):
+            actions = [("pause", "pause", "Pause")]
+        elif task.status == Status.COMPLETED:
+            exists = bool(task.final_path and task.final_path.exists())
+            actions = [("open", "open", "Open"), ("folder", "folder", "Show in folder")] if exists else []
+        else:
+            actions = [("resume", "play", "Resume")]
+            if task.status == Status.ERROR and getattr(task, "kind", "file") != "ytdl":
+                actions.append(("refresh", "retry", "Refresh link…"))
+        return actions + [("more", "more", "More…")]
+
+    def _row_action_at(self, pos):
+        index = self.table.indexAt(pos)
+        if not index.isValid() or index.column() != COL_ACTIONS:
+            return None, None
+        actions = self.row_actions(index.row())
+        cell = self.table.visualRect(index)
+        for action, rect in zip(actions, ActionsDelegate.rects(cell, len(actions))):
+            if rect.contains(QPointF(pos)):
+                return index.row(), action
+        return index.row(), None
+
+    def _run_row_action(self, row: int, key: str, global_pos):
+        self.table.clearSelection()
+        self.table.selectRow(row)
+        {"pause": self.pause_selected, "resume": self.resume_selected, "open": self.open_selected,
+         "folder": self.open_selected_folder, "refresh": lambda: self.refresh_link(),
+         "more": lambda: self._context_menu(self.table.viewport().mapFromGlobal(global_pos))}[key]()
+
+    def _row_data(self, s: dict) -> dict:
+        """The comfortable view's name cell: title, second line, bar."""
+        status, total, done = s["status"], s["total_size"], s["downloaded"]
+        size = (("~" if s["size_estimated"] else "") + human_size(total)) if total else ""
+        of = f"{human_size(done)} of {size}" if size else human_size(done) if done else ""
+        pct = f"{100 * s['progress']:.0f}%" if s["progress"] is not None else ""
+        where = (ytdl.site_for(s["url"]) if s["kind"] == "ytdl" else "") or QUrl(s["url"]).host().removeprefix("www.")
+        q = self.queues.queue_of(s["id"])
+        scanned = self._scans.get(s["id"]) or (self._saved_scan(s["id"]) if status == Status.COMPLETED else None)
+        alert = False
+        if getattr(scanned, "status", "") == "threat":
+            sub, alert = f"Threat found by Microsoft Defender: {scanned.detail}", True
+        elif status == Status.DOWNLOADING:
+            parts = [of, f"{human_size(s['speed'])}/s" if s["speed"] else "", f"{human_time(s['eta'])} left"
+                     if s["eta"] else ""]
+            sub = "  ·  ".join(x for x in parts if x) or "Downloading…"
+        elif status == Status.PROBING:
+            sub = "Connecting…"
+        elif status == Status.MERGING:
+            sub = "Joining video and audio…"
+        elif status == Status.QUEUED:
+            sub = "Waiting for a free slot"
+        elif status == Status.COMPLETED:
+            sub = "  ·  ".join(x for x in (size, where, friendly_date(self.manager.get(s["id"]).added_at)) if x)
+        elif status == Status.ERROR:
+            sub, alert = friendly_error(s["error"]), True
+        elif status == Status.CANCELLED:
+            sub = "Cancelled"
+        else:  # paused
+            label = f"In {q.name}" if q and s["id"] not in q.tried else "Paused"
+            sub = "  ·  ".join(x for x in (label, of, pct) if x)
+        bar = None
+        if status not in (Status.COMPLETED, Status.CANCELLED) and not alert:
+            bar = (None if status == Status.MERGING else s["progress"], status)
+        name = s["filename"] or s["url"].rsplit("/", 1)[-1] or s["url"]
+        return {"title": name, "subtitle": sub, "alert": alert, "bar": bar,
+                "type": theme.file_type(name, s["kind"]), "thumbnail": s.get("thumbnail")}
 
     # --- refreshing an expired link ---
 
@@ -2483,6 +2932,30 @@ class MainWindow(QMainWindow):
         # A click on a row's checkbox toggles just that row, like Ctrl+click.
         mouse = (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick,
                  QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease)
+        if obj is self.table.viewport():
+            t = event.type()
+            if t == QEvent.Type.MouseMove:  # hover: which row shows its buttons
+                pos = event.position().toPoint()
+                index = self.table.indexAt(pos)
+                row = index.row() if index.isValid() else -1
+                if row != self._hover_row or (index.isValid() and index.column() == COL_ACTIONS):
+                    self._hover_row, self._hover_pos = row, pos
+                    self.table.viewport().update()
+            elif t == QEvent.Type.Leave:
+                self._hover_row, self._hover_pos = -1, None
+                self.table.viewport().update()
+            elif t == QEvent.Type.ToolTip:
+                row, action = self._row_action_at(event.pos())
+                if action:
+                    QToolTip.showText(event.globalPos(), action[2], self.table.viewport())
+                    return True
+            elif t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick) \
+                    and event.button() == Qt.MouseButton.LeftButton:
+                row, action = self._row_action_at(event.position().toPoint())
+                if action:
+                    if t == QEvent.Type.MouseButtonPress:
+                        self._run_row_action(row, action[0], event.globalPosition().toPoint())
+                    return True
         if obj is self.table.viewport() and event.type() in mouse:
             if event.type() in mouse[:2]:
                 index = self.table.indexAt(event.position().toPoint())
@@ -2815,6 +3288,8 @@ def main():
     app.setOrganizationName(APP_NAME)
     app.setStyle("Fusion")
     app.setWindowIcon(theme.app_icon())
+    title_bars = TitleBarStyler(app)
+    app.installEventFilter(title_bars)
     win = MainWindow()
     win.apply_theme()
     app.styleHints().colorSchemeChanged.connect(
