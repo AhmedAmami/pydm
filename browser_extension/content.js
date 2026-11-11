@@ -1,6 +1,7 @@
-// Puts a "Download" button at the top-right of a video while the mouse is over it.
-// Clicking hands the video to background.js, which works out what to send
-// (YouTube page, direct file, or the stream detected on this tab).
+// Puts a small round download button at the top-right of a video while the mouse
+// is over it; it widens to say "Download" when pointed at. Clicking hands the video
+// to background.js, which works out what to send (YouTube page, direct file, or the
+// stream detected on this tab).
 (() => {
   if (window.__pydmButton) return; // injected twice (e.g. extension reloaded)
   window.__pydmButton = true;
@@ -17,35 +18,61 @@
   const host = document.createElement("pydm-video-button");
   host.style.cssText = "all: initial; position: fixed; z-index: 2147483647; top: 0; right: 0; display: none;";
   const root = host.attachShadow({ mode: "closed" });
+  // A 32 px dark glass circle with the PyDM arrow; pointed at, it slides open to
+  // "Download" in PyDM blue. While sending and after, it stays open to say what happened.
   root.innerHTML = `
     <style>
-      .wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+      .wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+              animation: pop .16s ease-out; }
+      @keyframes pop { from { opacity: 0; transform: scale(.8); } }
       button {
-        display: flex; align-items: center; gap: 6px; cursor: pointer;
-        font: 600 13px/1 system-ui, "Segoe UI", sans-serif; color: #fff;
-        background: #1565c0; border: 1px solid #ffffff55; border-radius: 6px;
-        padding: 7px 11px 7px 9px; box-shadow: 0 2px 8px #0006; opacity: .92;
+        display: flex; align-items: center; height: 32px; min-width: 32px; padding: 0 7px;
+        box-sizing: border-box; cursor: pointer; border-radius: 16px;
+        font: 600 12.5px/1 system-ui, "Segoe UI", sans-serif; color: #fff;
+        background: rgba(15, 18, 24, .55); border: 1px solid rgba(255, 255, 255, .22);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        box-shadow: 0 1px 6px rgba(0, 0, 0, .35); opacity: .85;
+        transition: background .15s, opacity .15s, border-color .15s, padding .18s;
       }
-      button:hover { background: #1976d2; opacity: 1; }
+      button:hover, button.open { background: #2563eb; border-color: #2563eb; opacity: 1; padding: 0 12px 0 8px; }
+      button:active { transform: scale(.96); }
       button:disabled { cursor: default; }
-      button.ok { background: #2e7d32; }
-      button.bad { background: #c62828; }
+      button.ok { background: #16a34a; border-color: #16a34a; }
+      button.bad { background: #dc2626; border-color: #dc2626; }
+      button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
       svg { width: 16px; height: 16px; flex: none; }
+      .spin { animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      span {
+        max-width: 0; overflow: hidden; white-space: nowrap; opacity: 0; line-height: 18px;
+        transition: max-width .18s ease, opacity .12s, margin .18s;
+      }
+      button:hover span, button.open span { max-width: 120px; opacity: 1; margin-left: 6px; }
       .msg {
         max-width: 260px; font: 12px/1.35 system-ui, "Segoe UI", sans-serif; color: #fff;
-        background: #000c; border-radius: 6px; padding: 6px 9px; display: none;
+        background: rgba(15, 18, 24, .85); border-radius: 8px; padding: 6px 9px; display: none;
       }
     </style>
     <div class="wrap">
-      <button title="Download this video with PyDM">
-        <svg viewBox="0 0 16 16" fill="#fff"><path d="M6.5 2h3v6h2.7L8 12.3 3.8 8h2.7z"/><rect x="3" y="13" width="10" height="1.4"/></svg>
-        <span>Download</span>
-      </button>
+      <button title="Download with PyDM" aria-label="Download this video with PyDM"><i></i><span>Download</span></button>
       <div class="msg"></div>
     </div>`;
   const button = root.querySelector("button");
+  const icon = root.querySelector("i");
   const label = root.querySelector("span");
   const msg = root.querySelector(".msg");
+  const ICONS = {
+    download: '<svg viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" '
+      + 'stroke-linejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>',
+    busy: '<svg class="spin" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.8" '
+      + 'stroke-linecap="round"><path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5"/></svg>',
+    ok: '<svg viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" '
+      + 'stroke-linejoin="round"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>',
+    bad: '<svg viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">'
+      + '<path d="M8 3.5v5.5M8 12.2v.1"/></svg>',
+  };
+  icon.style.display = "contents";
+  icon.innerHTML = ICONS.download;
 
   // Don't let clicks reach the player underneath (in fullscreen the button sits inside it).
   for (const type of ["click", "mousedown", "mouseup", "pointerdown", "pointerup", "dblclick"]) {
@@ -193,6 +220,7 @@
   function resetButton() {
     button.disabled = false;
     button.className = "";
+    icon.innerHTML = ICONS.download;
     label.textContent = "Download";
     msg.style.display = "none";
   }
@@ -218,6 +246,8 @@
     busy = true;
     const video = current;  // the mouse may move to another video while we look for the post
     button.disabled = true;
+    button.className = "open";
+    icon.innerHTML = ICONS.busy;
     label.textContent = "Sending…";
     let reply;
     try {
@@ -231,7 +261,8 @@
     } catch {
       reply = { ok: false, message: "PyDM was updated. Reload this page, then try again." };
     }
-    button.className = reply?.ok ? "ok" : "bad";
+    button.className = reply?.ok ? "open ok" : "open bad";
+    icon.innerHTML = reply?.ok ? ICONS.ok : ICONS.bad;
     label.textContent = reply?.ok ? "Sent to PyDM" : "Not sent";
     if (!reply?.ok) {
       msg.textContent = reply?.message || "Couldn't reach PyDM.";

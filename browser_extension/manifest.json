@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PyDM Integration",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Send downloads and videos to the PyDM download manager.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu+KOT999uYFXu9iNLhdTBwaOOi+2dKfRtLRkLDjB0y3726v8+BoYR/ULGOqtV4aBl8jf0Aqnxu0t2AED6ubpRFvy6c07zS+Xpx7j/wWV8RqjzQO+gY6khRhr4isI7dDZxEw7gH7BkfRi5MsSfJNdWPBsoaqd/w3fI6b1lm/g+pUnjBuqM1mJPCaKDXOMgXWpQMK6fiuLu9jT8X2g4iR/rXDoX2Swdweuf5svQsLTJtBaqwIW+ZVxv983jxQhkXGVGFJvwbOX5LIh77uY06kn0LSTDf63RoYwLMK35AZuUkHD4FPlLqnpXDhPT5ES2HCuZeLFGz4uPV5btZjHbHYg8wIDAQAB",
   "permissions": [

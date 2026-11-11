@@ -1,3 +1,8 @@
+## PyDM 1.3.2
+
+- **A smaller download button on videos.** The big blue button that covered part of the video is now a small see-through circle with a download arrow. Point at it and it slides open to **Download**; click it and it shows *Sending…*, then a green *Sent to PyDM* (or a red *Not sent* with the reason). It still hides itself when the mouse rests, so it never blocks the video while you watch.
+- **After updating, restart your browser** (or click the reload arrow on PyDM in the browser's extensions page) so it picks up the new button.
+
 ## PyDM 1.3.1
 
 - **Fixed: a dubbed language could download in the original language.** When the video came from the browser (signed in to YouTube), some videos were saved with their original audio even though another language was picked. Now the chosen language is used.
@@ -35,7 +40,7 @@ PyDM is a free download manager for Windows. It downloads files faster by using 
 
 ### Install
 
-1. Download **PyDM-Setup-1.3.1.exe** below, under *Assets*.
+1. Download **PyDM-Setup-1.3.2.exe** below, under *Assets*.
 2. Run it. Windows may show **"Windows protected your PC"** because the installer isn't signed. Click **More info**, then **Run anyway**.
 3. Click through the setup. It installs only for you, so it doesn't need an administrator.
 
@@ -51,7 +56,7 @@ With this, downloads and videos go to PyDM by themselves.
 ### Using it
 
 - **Files:** download as usual in the browser. PyDM takes over, or click **Add URL** in PyDM and paste a link.
-- **Videos:** move the mouse over a video and click the blue **Download** button that appears on it, then pick a quality.
+- **Videos:** move the mouse over a video and click the small round download button at its top-right corner, then pick a quality.
 - **Instagram and some Facebook videos** need you signed in to the site in your browser. Download those from the browser so your login comes along.
 - **Queues and scheduling:** download overnight, and optionally shut down the PC when done (**Scheduler** button).
 - New downloads are checked by Microsoft Defender automatically.
